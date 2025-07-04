@@ -77,7 +77,7 @@ const (
 	policyRAPLDisBit              = 23
 	policyCipherTextHidingDRAMBit = 24
 
-	maxPlatformInfoBit = 5
+	maxPlatformInfoBit = 6
 
 	signatureOffset = 0x2A0
 	ecdsaRSsize     = 72 // From the ECDSA-P384-SHA384 format in SEV SNP API specification.
@@ -143,7 +143,7 @@ const (
 	// https://www.amd.com/system/files/TechDocs/56860.pdf
 	ReportVersion3 = 3
 	// MaxSupportedReportVersion is the highest attestation report version that this library supports.
-	MaxSupportedReportVersion = 4
+	MaxSupportedReportVersion = 5
 )
 
 // CertTableHeaderEntry defines an entry of the beginning of an extended attestation report which

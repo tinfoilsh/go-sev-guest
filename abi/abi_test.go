@@ -156,10 +156,10 @@ func TestReportMbz(t *testing.T) {
 			wantErr:     "policy[17] is reserved, must be 1, got 0",
 		},
 		{
-			name:        "Guest policy bit 25",
+			name:        "Guest policy bit 26",
 			changeIndex: policyOffset + 3, // Bits 24-31
-			changeValue: 0x80,             // Set bit 25
-			wantErr:     "malformed guest policy: mbz range policy[0x19:0x3f] not all zero",
+			changeValue: 0x04,             // Set bit 26
+			wantErr:     "malformed guest policy: mbz range policy[0x1a:0x3f] not all zero",
 		},
 	}
 	reportProto := &spb.Report{}

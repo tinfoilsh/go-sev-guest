@@ -76,8 +76,9 @@ const (
 	policyMemAES256XTSBit         = 22
 	policyRAPLDisBit              = 23
 	policyCipherTextHidingDRAMBit = 24
+	policyPageSwapDisableBit      = 25
 
-	maxPlatformInfoBit = 6
+	maxPlatformInfoBit = 8
 
 	signatureOffset = 0x2A0
 	ecdsaRSsize     = 72 // From the ECDSA-P384-SHA384 format in SEV SNP API specification.
@@ -204,6 +205,8 @@ type SnpPlatformInfo struct {
 	// AliasCheckComplete indicates that alias detection has completed since the last system reset and there are no aliasing addresses.
 	// Mitigation for https://badram.eu/, see https://www.amd.com/en/resources/product-security/bulletin/amd-sb-3015.html#mitigation.
 	AliasCheckComplete bool
+	// TIOEnabled indicates that the platform has Trusted I/O enabled.
+	TIOEnabled bool
 }
 
 // SnpPolicy represents the bitmask guest policy that governs the VM's behavior from launch.
@@ -229,6 +232,8 @@ type SnpPolicy struct {
 	RAPLDis bool
 	// CipherTextHidingDRAM is true if ciphertext hiding for the DRAM must be enabled.
 	CipherTextHidingDRAM bool
+	// PageSwapDisable is true if guest access to page swap commands is disabled.
+	PageSwapDisable bool
 }
 
 // ParseSnpPolicy interprets the SEV SNP API's guest policy bitmask into an SnpPolicy struct type.
@@ -237,7 +242,7 @@ func ParseSnpPolicy(guestPolicy uint64) (SnpPolicy, error) {
 	if guestPolicy&uint64(1<<policyReserved1bit) == 0 {
 		return result, fmt.Errorf("policy[%d] is reserved, must be 1, got 0", policyReserved1bit)
 	}
-	if err := mbz64(guestPolicy, "policy", 63, 25); err != nil {
+	if err := mbz64(guestPolicy, "policy", 63, 26); err != nil {
 		return result, err
 	}
 	result.ABIMinor = uint8(guestPolicy & 0xff)
@@ -250,6 +255,7 @@ func ParseSnpPolicy(guestPolicy uint64) (SnpPolicy, error) {
 	result.MemAES256XTS = (guestPolicy & (1 << policyMemAES256XTSBit)) != 0
 	result.RAPLDis = (guestPolicy & (1 << policyRAPLDisBit)) != 0
 	result.CipherTextHidingDRAM = (guestPolicy & (1 << policyCipherTextHidingDRAMBit)) != 0
+	result.PageSwapDisable = (guestPolicy & (1 << policyPageSwapDisableBit)) != 0
 	return result, nil
 }
 
@@ -280,6 +286,9 @@ func SnpPolicyToBytes(policy SnpPolicy) uint64 {
 	if policy.CipherTextHidingDRAM {
 		result |= uint64(1 << policyCipherTextHidingDRAMBit)
 	}
+	if policy.PageSwapDisable {
+		result |= uint64(1 << policyPageSwapDisableBit)
+	}
 	return result
 }
 
@@ -293,6 +302,7 @@ func ParseSnpPlatformInfo(platformInfo uint64) (SnpPlatformInfo, error) {
 		RAPLDisabled:                (platformInfo & (1 << 3)) != 0,
 		CiphertextHidingDRAMEnabled: (platformInfo & (1 << 4)) != 0,
 		AliasCheckComplete:          (platformInfo & (1 << 5)) != 0,
+		TIOEnabled:                  (platformInfo & (1 << 7)) != 0,
 	}
 	reserved := platformInfo & ^uint64((1<<(maxPlatformInfoBit+1))-1)
 	if reserved != 0 {

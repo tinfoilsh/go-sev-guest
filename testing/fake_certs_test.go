@@ -20,8 +20,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-sev-guest/abi"
-	"github.com/google/go-sev-guest/kds"
+	"github.com/tinfoilsh/go-sev-guest/abi"
+	"github.com/tinfoilsh/go-sev-guest/kds"
 	"github.com/google/uuid"
 )
 

@@ -23,10 +23,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/go-sev-guest/abi"
-	"github.com/google/go-sev-guest/kds"
-	kpb "github.com/google/go-sev-guest/proto/fakekds"
-	"github.com/google/go-sev-guest/verify/trust"
+	"github.com/tinfoilsh/go-sev-guest/abi"
+	"github.com/tinfoilsh/go-sev-guest/kds"
+	kpb "github.com/tinfoilsh/go-sev-guest/proto/fakekds"
+	"github.com/tinfoilsh/go-sev-guest/verify/trust"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/proto"
 )

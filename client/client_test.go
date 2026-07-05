@@ -24,10 +24,10 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-sev-guest/abi"
-	labi "github.com/google/go-sev-guest/client/linuxabi"
-	spb "github.com/google/go-sev-guest/proto/sevsnp"
-	test "github.com/google/go-sev-guest/testing"
+	"github.com/tinfoilsh/go-sev-guest/abi"
+	labi "github.com/tinfoilsh/go-sev-guest/client/linuxabi"
+	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
+	test "github.com/tinfoilsh/go-sev-guest/testing"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/testing/protocmp"
 )

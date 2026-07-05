@@ -23,7 +23,7 @@
 package check
 
 import (
-	sevsnp "github.com/google/go-sev-guest/proto/sevsnp"
+	sevsnp "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	wrapperspb "google.golang.org/protobuf/types/known/wrapperspb"

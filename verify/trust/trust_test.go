@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-sev-guest/abi"
-	test "github.com/google/go-sev-guest/testing"
-	"github.com/google/go-sev-guest/verify/trust"
+	"github.com/tinfoilsh/go-sev-guest/abi"
+	test "github.com/tinfoilsh/go-sev-guest/testing"
+	"github.com/tinfoilsh/go-sev-guest/verify/trust"
 )
 
 func TestRetryHTTPSGetter(t *testing.T) {

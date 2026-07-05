@@ -27,8 +27,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/google/go-sev-guest/abi"
-	pb "github.com/google/go-sev-guest/proto/sevsnp"
+	"github.com/tinfoilsh/go-sev-guest/abi"
+	pb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	"go.uber.org/multierr"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"

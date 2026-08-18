@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/tinfoilsh/go-sev-guest/abi"
 	"github.com/tinfoilsh/go-sev-guest/kds"
-	"github.com/google/uuid"
 )
 
 func TestCertificatesParse(t *testing.T) {

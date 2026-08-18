@@ -116,17 +116,20 @@ func FakeKDSFromFile(path string) (*FakeKDS, error) {
 func FakeKDSFromSigner(signer *AmdSigner) (*FakeKDS, error) {
 	certs := &kpb.Certificates{}
 	rootBundles := map[string]*RootBundle{}
+	productLine := kds.ProductLine(signer.Product)
+	chipID := signer.HWID[:]
+	if productLine == "Turin" {
+		chipID = chipID[:8]
+	}
 	certs.ChipCerts = []*kpb.Certificates_ChipTCBCerts{
 		{
-			ChipId: signer.HWID[:],
+			ChipId: append([]byte(nil), chipID...),
 			TcbCerts: map[uint64][]byte{
 				uint64(signer.TCB): signer.Vcek.Raw,
 			},
 			Fms: abi.MaskedCpuid1EaxFromSevProduct(signer.Product),
 		},
 	}
-	productLine := kds.ProductLine(signer.Product)
-
 	b := &strings.Builder{}
 	if err := multierr.Combine(
 		pem.Encode(b, &pem.Block{Type: "CERTIFICATE", Bytes: signer.Ask.Raw}),

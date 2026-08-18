@@ -25,7 +25,6 @@ import (
 	"flag"
 	"fmt"
 	"math/big"
-	"strings"
 	"testing"
 
 	// Insecure randomness for faster testing.
@@ -390,13 +389,20 @@ func (b *AmdSignerBuilder) certifyAsvk() error {
 // for the given values.
 func CustomExtensions(tcb kds.TCBParts, hwid []byte, cspid, productName string) []pkix.Extension {
 	var productNameAsn1 []byte
-	asn1Zero, _ := asn1.Marshal(0)
-	if hwid != nil {
+	productLine := kds.ProductLineOfProductName(productName)
+	structVersion := 0
+	if productLine == "Turin" {
+		structVersion = 1
+		// Turin certificates identify the product line without a stepping
+		// suffix, including VCEKs.
+		productName = productLine
+	}
+	structVersionAsn1, _ := asn1.Marshal(structVersion)
+	if hwid != nil && productLine != "Turin" {
 		productNameAsn1, _ = asn1.MarshalWithParams(productName, "ia5")
 	} else {
-		parts := strings.SplitN(productName, "-", 2)
 		// VLEK doesn't have a -stepping component to its productName.
-		productNameAsn1, _ = asn1.MarshalWithParams(parts[0], "ia5")
+		productNameAsn1, _ = asn1.MarshalWithParams(productLine, "ia5")
 	}
 	blSpl, _ := asn1.Marshal(int(tcb.BlSpl))
 	teeSpl, _ := asn1.Marshal(int(tcb.TeeSpl))
@@ -406,19 +412,29 @@ func CustomExtensions(tcb kds.TCBParts, hwid []byte, cspid, productName string) 
 	spl6, _ := asn1.Marshal(int(tcb.Spl6))
 	spl7, _ := asn1.Marshal(int(tcb.Spl7))
 	ucodeSpl, _ := asn1.Marshal(int(tcb.UcodeSpl))
+	fmcSpl, _ := asn1.Marshal(int(tcb.FmcSpl))
 	exts := []pkix.Extension{
-		{Id: kds.OidStructVersion, Value: asn1Zero},
+		{Id: kds.OidStructVersion, Value: structVersionAsn1},
 		{Id: kds.OidProductName1, Value: productNameAsn1},
 		{Id: kds.OidBlSpl, Value: blSpl},
 		{Id: kds.OidTeeSpl, Value: teeSpl},
 		{Id: kds.OidSnpSpl, Value: snpSpl},
-		{Id: kds.OidSpl4, Value: spl4},
-		{Id: kds.OidSpl5, Value: spl5},
-		{Id: kds.OidSpl6, Value: spl6},
-		{Id: kds.OidSpl7, Value: spl7},
-		{Id: kds.OidUcodeSpl, Value: ucodeSpl},
 	}
+	if productLine == "Turin" {
+		exts = append(exts, pkix.Extension{Id: kds.OidFmcSpl, Value: fmcSpl})
+	} else {
+		exts = append(exts, pkix.Extension{Id: kds.OidSpl4, Value: spl4})
+	}
+	exts = append(exts,
+		pkix.Extension{Id: kds.OidSpl5, Value: spl5},
+		pkix.Extension{Id: kds.OidSpl6, Value: spl6},
+		pkix.Extension{Id: kds.OidSpl7, Value: spl7},
+		pkix.Extension{Id: kds.OidUcodeSpl, Value: ucodeSpl},
+	)
 	if hwid != nil {
+		if productLine == "Turin" && len(hwid) > 8 {
+			hwid = hwid[:8]
+		}
 		asn1Hwid, _ := asn1.Marshal(hwid[:])
 		exts = append(exts, pkix.Extension{Id: kds.OidHwid, Value: asn1Hwid})
 	} else {
@@ -431,12 +447,20 @@ func CustomExtensions(tcb kds.TCBParts, hwid []byte, cspid, productName string) 
 	return exts
 }
 
-func (b *AmdSignerBuilder) endorsementKeyPrecert(creationTime time.Time, hwid []byte, serialNumber *big.Int, key abi.ReportSigner) *x509.Certificate {
+func (b *AmdSignerBuilder) endorsementKeyPrecert(creationTime time.Time, hwid []byte, serialNumber *big.Int, key abi.ReportSigner) (*x509.Certificate, error) {
 	subject := amdPkixName(fmt.Sprintf("SEV-%s", key.String()), "0")
 	subject.SerialNumber = fmt.Sprintf("%x", serialNumber)
 	ica := b.Ask
 	if key == abi.VlekReportSigner {
 		ica = b.Asvk
+	}
+	tcb, err := kds.NewTCBVersionStruct(b.productLine(), uint64(b.TCB))
+	if err != nil {
+		return nil, err
+	}
+	parts, err := tcb.ToTCBParts()
+	if err != nil {
+		return nil, err
 	}
 	return &x509.Certificate{
 		Version:            3,
@@ -447,12 +471,15 @@ func (b *AmdSignerBuilder) endorsementKeyPrecert(creationTime time.Time, hwid []
 		SerialNumber:       serialNumber,
 		NotBefore:          time.Time{},
 		NotAfter:           creationTime.Add(vcekExpirationYears * 365 * 24 * time.Hour),
-		ExtraExtensions:    CustomExtensions(kds.TCBParts{}, hwid, b.CSPID, b.productName()),
-	}
+		ExtraExtensions:    CustomExtensions(parts, hwid, b.CSPID, b.productName()),
+	}, nil
 }
 
 func (b *AmdSignerBuilder) certifyVcek() error {
-	cert := b.endorsementKeyPrecert(b.VcekCreationTime, make([]byte, abi.ChipIDSize), big.NewInt(0), abi.VcekReportSigner)
+	cert, err := b.endorsementKeyPrecert(b.VcekCreationTime, b.HWID[:], big.NewInt(0), abi.VcekReportSigner)
+	if err != nil {
+		return err
+	}
 	b.VcekCustom.override(cert)
 
 	caBytes, err := x509.CreateCertificate(insecureRandomness, cert, b.Ask, b.Keys.Vcek.Public(), b.Keys.Ask)
@@ -465,7 +492,10 @@ func (b *AmdSignerBuilder) certifyVcek() error {
 }
 
 func (b *AmdSignerBuilder) certifyVlek() error {
-	cert := b.endorsementKeyPrecert(b.VlekCreationTime, nil, big.NewInt(0), abi.VlekReportSigner)
+	cert, err := b.endorsementKeyPrecert(b.VlekCreationTime, nil, big.NewInt(0), abi.VlekReportSigner)
+	if err != nil {
+		return err
+	}
 	b.VlekCustom.override(cert)
 
 	caBytes, err := x509.CreateCertificate(insecureRandomness, cert, b.Asvk, b.Keys.Vlek.Public(), b.Keys.Asvk)
@@ -499,15 +529,25 @@ func (b *AmdSignerBuilder) TestOnlyCertChain() (*AmdSigner, error) {
 			return nil, fmt.Errorf("vlek creation error: %v", err)
 		}
 	}
+	product, err := kds.ParseProductName(b.productName(), abi.VcekReportSigner)
+	if err != nil {
+		// Some products, including current Turin certificates, use only the
+		// product line in the VCEK productName extension.
+		product, err = kds.ParseProductLine(b.productLine())
+	}
+	if err != nil {
+		return nil, fmt.Errorf("product parsing error: %v", err)
+	}
 	s := &AmdSigner{
-		Ark:    b.Ark,
-		Ask:    b.Ask,
-		Asvk:   b.Asvk,
-		Vcek:   b.Vcek,
-		Vlek:   b.Vlek,
-		Keys:   b.Keys,
-		Extras: b.Extras,
-		TCB:    b.TCB,
+		Ark:     b.Ark,
+		Ask:     b.Ask,
+		Asvk:    b.Asvk,
+		Vcek:    b.Vcek,
+		Vlek:    b.Vlek,
+		Keys:    b.Keys,
+		Extras:  b.Extras,
+		TCB:     b.TCB,
+		Product: product,
 	}
 	copy(s.HWID[:], b.HWID[:])
 	return s, nil

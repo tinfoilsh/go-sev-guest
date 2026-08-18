@@ -524,6 +524,7 @@ func TestReportTCBFormat(t *testing.T) {
 	}
 	turinFMS := abi.MaskedCpuid1EaxFromSevProduct(&spb.SevProduct{Name: spb.SevProduct_SEV_PRODUCT_TURIN})
 	genoaFMS := abi.MaskedCpuid1EaxFromSevProduct(&spb.SevProduct{Name: spb.SevProduct_SEV_PRODUCT_GENOA})
+	sienaFMS := abi.FmsToCpuid1Eax(0x19, 0xa0, 0)
 
 	tests := []struct {
 		name    string
@@ -532,6 +533,7 @@ func TestReportTCBFormat(t *testing.T) {
 		wantErr string
 	}{
 		{name: "Turin", report: &spb.Report{Version: abi.ReportVersion3, Cpuid1EaxFms: turinFMS, ReportedTcb: turinTCB.TCB}, certTCB: *turinTCB},
+		{name: "Siena", report: &spb.Report{Version: abi.ReportVersion3, Cpuid1EaxFms: sienaFMS}, certTCB: *legacyTCB},
 		{name: "legacy v2", report: &spb.Report{Version: 2}, certTCB: *legacyTCB},
 		{name: "product mismatch", report: &spb.Report{Version: abi.ReportVersion3, Cpuid1EaxFms: genoaFMS}, certTCB: *turinTCB, wantErr: "different TCB formats"},
 		{name: "Turin certificate with v2 report", report: &spb.Report{Version: 2}, certTCB: *turinTCB, wantErr: "non-legacy TCB format"},

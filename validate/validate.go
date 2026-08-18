@@ -71,9 +71,8 @@ type Options struct {
 	PermitProvisionalFirmware bool
 	// PlatformInfo is the maximum of acceptable PLATFORM_INFO data. Not checked if nil.
 	PlatformInfo *abi.SnpPlatformInfo
-	// PermitPlatformInfoBit6 allows PLATFORM_INFO bit 6 to be set. The current AMD SEV-SNP ABI
-	// reserves this bit, but it is set by some Turin firmware. Callers should enable this only after
-	// authenticating the report as a Turin report. All other reserved bits remain rejected.
+	// Deprecated: PLATFORM_INFO bit 6 is IOMMU_WRITE_SAFE and is always parsed according to the
+	// current AMD SEV-SNP ABI. Set PlatformInfo.IOMMUWriteSafe to require the hardware mitigation.
 	PermitPlatformInfoBit6 bool
 	// RequireAuthorKey if true, will not validate a report without AUTHOR_KEY_EN equal to 1.
 	// Implies RequireIDBlock is true.
@@ -623,12 +622,9 @@ func allZero(buf []byte) bool {
 	return true
 }
 
-func validatePlatformInfo(platformInfo uint64, required *abi.SnpPlatformInfo, permitBit6 bool) error {
+func validatePlatformInfo(platformInfo uint64, required *abi.SnpPlatformInfo) error {
 	if required == nil {
 		return nil
-	}
-	if permitBit6 {
-		platformInfo &^= 1 << 6
 	}
 	reportInfo, err := abi.ParseSnpPlatformInfo(platformInfo)
 	if err != nil {
@@ -651,6 +647,9 @@ func validatePlatformInfo(platformInfo uint64, required *abi.SnpPlatformInfo, pe
 	}
 	if !reportInfo.AliasCheckComplete && required.AliasCheckComplete {
 		return errors.New("required memory alias check hasn't been completed")
+	}
+	if !reportInfo.IOMMUWriteSafe && required.IOMMUWriteSafe {
+		return errors.New("required IOMMU write-safe hardware mitigation is not present")
 	}
 	if reportInfo.TIOEnabled && !required.TIOEnabled {
 		return errors.New("unauthorized feature SEV-TIO enabled")
@@ -844,7 +843,7 @@ func SnpAttestation(attestation *spb.Attestation, options *Options) error {
 		validateVerbatimFields(report, options),
 		validateTcb(report, exts.TCBVersionStruct, options),
 		validateVersion(report, options),
-		validatePlatformInfo(report.GetPlatformInfo(), options.PlatformInfo, options.PermitPlatformInfoBit6),
+		validatePlatformInfo(report.GetPlatformInfo(), options.PlatformInfo),
 		validateKeys(report, options),
 		validateMitigationVectors(report, options)); err != nil {
 		return err

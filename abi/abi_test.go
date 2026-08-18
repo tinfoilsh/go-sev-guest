@@ -273,8 +273,8 @@ func TestSnpPlatformInfo(t *testing.T) {
 			wantErr: "unrecognized platform info bit(s): 0x100",
 		},
 		{
-			input:   64,
-			wantErr: "reserved platform info bit 6 set: 0x40",
+			input: 64,
+			want:  SnpPlatformInfo{IOMMUWriteSafe: true},
 		},
 	}
 	for _, tc := range tests {

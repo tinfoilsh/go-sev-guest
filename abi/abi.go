@@ -22,9 +22,9 @@ import (
 	"fmt"
 	"math/big"
 
-	pb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	"github.com/google/logger"
 	"github.com/google/uuid"
+	pb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/cryptobyte/asn1"
 	"google.golang.org/protobuf/types/known/wrapperspb"

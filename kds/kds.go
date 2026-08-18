@@ -202,7 +202,7 @@ func (v TCBVersionStruct) ToTCBParts() (TCBParts, error) {
 // NewTCBVersionStruct creates new TCBVersionStruct from product line and 64-bit TCB value
 func NewTCBVersionStruct(productLine string, tcb uint64) (*TCBVersionStruct, error) {
 	canonicalProductLine := ""
-	for _, known := range []string{"Milan", "Genoa", "Turin"} {
+	for _, known := range []string{"Milan", "Genoa", "Siena", "Turin"} {
 		if strings.EqualFold(productLine, known) {
 			canonicalProductLine = known
 			break

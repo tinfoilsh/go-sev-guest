@@ -119,6 +119,9 @@ func TestTCBVersionValidation(t *testing.T) {
 	if _, err := NewTCBVersionStruct("tUrIn", 0); err != nil {
 		t.Fatalf("NewTCBVersionStruct rejected a known product with mixed case: %v", err)
 	}
+	if siena, err := NewTCBVersionStruct("sIeNa", 0); err != nil || siena.version != tcbStructVersion0 {
+		t.Fatalf("NewTCBVersionStruct rejected Siena's legacy TCB format: %v", err)
+	}
 	if _, err := NewTCBVersionStruct("Venice", 0); err == nil {
 		t.Fatal("NewTCBVersionStruct accepted an unknown future product")
 	}

@@ -71,6 +71,9 @@ type Options struct {
 	PermitProvisionalFirmware bool
 	// PlatformInfo is the maximum of acceptable PLATFORM_INFO data. Not checked if nil.
 	PlatformInfo *abi.SnpPlatformInfo
+	// Deprecated: PLATFORM_INFO bit 6 is IOMMU_WRITE_SAFE and is always parsed according to the
+	// current AMD SEV-SNP ABI. Set PlatformInfo.IOMMUWriteSafe to require the hardware mitigation.
+	PermitPlatformInfoBit6 bool
 	// RequireAuthorKey if true, will not validate a report without AUTHOR_KEY_EN equal to 1.
 	// Implies RequireIDBlock is true.
 	RequireAuthorKey bool
@@ -604,6 +607,9 @@ func validatePlatformInfo(platformInfo uint64, required *abi.SnpPlatformInfo) er
 	}
 	if !reportInfo.AliasCheckComplete && required.AliasCheckComplete {
 		return errors.New("required memory alias check hasn't been completed")
+	}
+	if !reportInfo.IOMMUWriteSafe && required.IOMMUWriteSafe {
+		return errors.New("required IOMMU write-safe hardware mitigation is not present")
 	}
 	if reportInfo.TIOEnabled && !required.TIOEnabled {
 		return errors.New("unauthorized feature SEV-TIO enabled")

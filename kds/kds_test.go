@@ -119,6 +119,9 @@ func TestTCBVersionValidation(t *testing.T) {
 	if _, err := NewTCBVersionStruct("tUrIn", 0); err != nil {
 		t.Fatalf("NewTCBVersionStruct rejected a known product with mixed case: %v", err)
 	}
+	if _, err := NewTCBVersionStruct("Venice", 0); err == nil {
+		t.Fatal("NewTCBVersionStruct accepted an unknown future product")
+	}
 
 	reserved, err := NewTCBVersionStruct("Turin", 0x0000000100000000)
 	if err != nil {

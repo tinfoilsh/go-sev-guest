@@ -484,15 +484,17 @@ func TestValidateSnpAttestation(t *testing.T) {
 	}
 }
 
-func TestValidatePlatformInfoBit6(t *testing.T) {
-	required := &abi.SnpPlatformInfo{}
-	if err := validatePlatformInfo(1<<6, required, false); err == nil || !strings.Contains(err.Error(), "reserved platform info bit 6") {
-		t.Fatalf("validatePlatformInfo() returned %v, want bit 6 error", err)
+func TestValidateIOMMUWriteSafe(t *testing.T) {
+	if err := validatePlatformInfo(1<<6, &abi.SnpPlatformInfo{}); err != nil {
+		t.Fatalf("validatePlatformInfo() rejected IOMMU_WRITE_SAFE: %v", err)
 	}
-	if err := validatePlatformInfo(1<<6, required, true); err != nil {
-		t.Fatalf("validatePlatformInfo() rejected permitted bit 6: %v", err)
+	if err := validatePlatformInfo(0, &abi.SnpPlatformInfo{IOMMUWriteSafe: true}); err == nil || !strings.Contains(err.Error(), "IOMMU write-safe") {
+		t.Fatalf("validatePlatformInfo() returned %v, want missing mitigation error", err)
 	}
-	if err := validatePlatformInfo((1<<6)|(1<<8), required, true); err == nil || !strings.Contains(err.Error(), "unrecognized platform info bit") {
+	if err := validatePlatformInfo(1<<6, &abi.SnpPlatformInfo{IOMMUWriteSafe: true}); err != nil {
+		t.Fatalf("validatePlatformInfo() rejected required IOMMU_WRITE_SAFE: %v", err)
+	}
+	if err := validatePlatformInfo((1<<6)|(1<<8), &abi.SnpPlatformInfo{}); err == nil || !strings.Contains(err.Error(), "unrecognized platform info bit") {
 		t.Fatalf("validatePlatformInfo() returned %v, want another reserved-bit error", err)
 	}
 }

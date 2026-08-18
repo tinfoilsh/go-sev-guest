@@ -29,8 +29,6 @@ import (
 	"github.com/tinfoilsh/go-sev-guest/abi"
 	pb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	"go.uber.org/multierr"
-	"golang.org/x/text/cases"
-	"golang.org/x/text/language"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -203,13 +201,18 @@ func (v TCBVersionStruct) ToTCBParts() (TCBParts, error) {
 
 // NewTCBVersionStruct creates new TCBVersionStruct from product line and 64-bit TCB value
 func NewTCBVersionStruct(productLine string, tcb uint64) (*TCBVersionStruct, error) {
-	c := cases.Title(language.English)
-	switch c.String(productLine) {
-	case "Turin":
-		return &TCBVersionStruct{version: tcbStructVersion1, TCB: tcb}, nil
-	default:
-		return &TCBVersionStruct{version: tcbStructVersion0, TCB: tcb}, nil
+	canonicalProductLine := ""
+	for _, known := range []string{"Milan", "Genoa", "Turin"} {
+		if strings.EqualFold(productLine, known) {
+			canonicalProductLine = known
+			break
+		}
 	}
+	version, err := productLineToTCBVersion(canonicalProductLine)
+	if err != nil {
+		return nil, fmt.Errorf("invalid product line %q", productLine)
+	}
+	return &TCBVersionStruct{version: version, TCB: tcb}, nil
 }
 
 // WithTCB returns a TCB value interpreted with the same product-specific
@@ -330,12 +333,11 @@ type TCBParts struct {
 // productLine. Callers outside this package should use this constructor when
 // creating policy values for products whose TCB layout is not version 0.
 func NewTCBParts(productLine string, parts TCBParts) (TCBParts, error) {
-	c := cases.Title(language.English)
-	version, err := productLineToTCBVersion(c.String(productLine))
+	layout, err := NewTCBVersionStruct(productLine, 0)
 	if err != nil {
 		return TCBParts{}, err
 	}
-	parts.version = version
+	parts.version = layout.version
 	if _, err := parts.ToTCBVersionStruct(); err != nil {
 		return TCBParts{}, err
 	}

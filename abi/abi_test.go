@@ -24,8 +24,8 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	"github.com/google/uuid"
+	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -273,8 +273,8 @@ func TestSnpPlatformInfo(t *testing.T) {
 			wantErr: "unrecognized platform info bit(s): 0x100",
 		},
 		{
-			input:   64,
-			wantErr: "reserved platform info bit 6 set: 0x40",
+			input: 64,
+			want:  SnpPlatformInfo{IOMMUWriteSafe: true},
 		},
 	}
 	for _, tc := range tests {

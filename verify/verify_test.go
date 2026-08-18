@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/logger"
 	"github.com/tinfoilsh/go-sev-guest/abi"
 	sg "github.com/tinfoilsh/go-sev-guest/client"
 	"github.com/tinfoilsh/go-sev-guest/kds"
@@ -46,7 +47,6 @@ import (
 	testclient "github.com/tinfoilsh/go-sev-guest/testing/client"
 	"github.com/tinfoilsh/go-sev-guest/verify/testdata"
 	"github.com/tinfoilsh/go-sev-guest/verify/trust"
-	"github.com/google/logger"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 
@@ -830,6 +830,37 @@ func TestRealAttestationVerification(t *testing.T) {
 				})
 			})
 		}
+	}
+}
+
+func TestValidateExtensionsTCBFormat(t *testing.T) {
+	turinTCB, err := kds.NewTCBVersionStruct("Turin", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyTCB, err := kds.NewTCBVersionStruct("Milan", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name        string
+		productLine string
+		tcb         kds.TCBVersionStruct
+		wantErr     string
+	}{
+		{name: "Turin", productLine: "Turin", tcb: *turinTCB},
+		{name: "legacy", productLine: "Genoa", tcb: *legacyTCB},
+		{name: "format mismatch", productLine: "Turin", tcb: *legacyTCB, wantErr: "different TCB formats"},
+		{name: "unknown product", productLine: "Venice", tcb: *turinTCB, wantErr: "could not determine TCB format"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateExtensions(&kds.Extensions{TCBVersionStruct: tc.tcb}, abi.VcekReportSigner, tc.productLine)
+			if (err == nil && tc.wantErr != "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("validateExtensions() returned %v, want error containing %q", err, tc.wantErr)
+			}
+		})
 	}
 }
 

@@ -22,9 +22,9 @@ import (
 	"fmt"
 	"math/big"
 
-	pb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	"github.com/google/logger"
 	"github.com/google/uuid"
+	pb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/cryptobyte/asn1"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -208,6 +208,9 @@ type SnpPlatformInfo struct {
 	// AliasCheckComplete indicates that alias detection has completed since the last system reset and there are no aliasing addresses.
 	// Mitigation for https://badram.eu/, see https://www.amd.com/en/resources/product-security/bulletin/amd-sb-3015.html#mitigation.
 	AliasCheckComplete bool
+	// IOMMUWriteSafe indicates that the platform has a hardware fix for CVE-2023-20585.
+	// Platforms without the hardware fix use the verified mitigation vectors instead.
+	IOMMUWriteSafe bool
 	// Indicates that SEV-TIO is enabled.
 	TIOEnabled bool
 }
@@ -305,10 +308,8 @@ func ParseSnpPlatformInfo(platformInfo uint64) (SnpPlatformInfo, error) {
 		RAPLDisabled:                (platformInfo & (1 << 3)) != 0,
 		CiphertextHidingDRAMEnabled: (platformInfo & (1 << 4)) != 0,
 		AliasCheckComplete:          (platformInfo & (1 << 5)) != 0,
+		IOMMUWriteSafe:              (platformInfo & (1 << 6)) != 0,
 		TIOEnabled:                  (platformInfo & (1 << 7)) != 0,
-	}
-	if platformInfo&(1<<6) != 0 {
-		return result, fmt.Errorf("reserved platform info bit 6 set: 0x%x", platformInfo)
 	}
 	reserved := platformInfo & ^uint64((1<<(maxPlatformInfoBit+1))-1)
 	if reserved != 0 {

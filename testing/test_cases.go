@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/logger"
 	"github.com/tinfoilsh/go-sev-guest/abi"
 	labi "github.com/tinfoilsh/go-sev-guest/client/linuxabi"
 	"github.com/tinfoilsh/go-sev-guest/kds"
 	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
-	"github.com/google/logger"
 	"google.golang.org/protobuf/encoding/prototext"
 )
 
@@ -205,7 +205,11 @@ func makeTestCerts(opts *DeviceOptions) ([]byte, *AmdSigner, error) {
 	signer := opts.Signer
 	var productName string
 	if opts.Product != nil {
-		productName = kds.ProductName(opts.Product)
+		if opts.Product.GetMachineStepping() == nil {
+			productName = kds.ProductLine(opts.Product)
+		} else {
+			productName = kds.ProductName(opts.Product)
+		}
 	} else {
 		productName = GetProductName()
 	}

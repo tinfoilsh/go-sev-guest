@@ -27,6 +27,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/logger"
 	"github.com/tinfoilsh/go-sev-guest/abi"
 	"github.com/tinfoilsh/go-sev-guest/kds"
 	checkpb "github.com/tinfoilsh/go-sev-guest/proto/check"
@@ -37,7 +38,6 @@ import (
 	"github.com/tinfoilsh/go-sev-guest/validate"
 	"github.com/tinfoilsh/go-sev-guest/verify"
 	"github.com/tinfoilsh/go-sev-guest/verify/trust"
-	"github.com/google/logger"
 	"go.uber.org/multierr"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"

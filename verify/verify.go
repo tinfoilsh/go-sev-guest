@@ -26,12 +26,12 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/google/logger"
 	"github.com/tinfoilsh/go-sev-guest/abi"
 	"github.com/tinfoilsh/go-sev-guest/kds"
 	cpb "github.com/tinfoilsh/go-sev-guest/proto/check"
 	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	"github.com/tinfoilsh/go-sev-guest/verify/trust"
-	"github.com/google/logger"
 	"go.uber.org/multierr"
 )
 
@@ -356,6 +356,13 @@ func validateExtensions(exts *kds.Extensions, key abi.ReportSigner, knownProduct
 	if knownProductLine == "" {
 		_, err := kds.ParseProductName(exts.ProductName, key)
 		return err
+	}
+	expected, err := kds.NewTCBVersionStruct(knownProductLine, 0)
+	if err != nil {
+		return fmt.Errorf("could not determine TCB format for product %q: %v", knownProductLine, err)
+	}
+	if !expected.SameFormat(exts.TCBVersionStruct) {
+		return fmt.Errorf("product %q and V[CL]EK certificate use different TCB formats", knownProductLine)
 	}
 	return nil
 }

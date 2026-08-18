@@ -17,12 +17,14 @@ package testing
 import (
 	"bytes"
 	"crypto/x509"
+	"reflect"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/tinfoilsh/go-sev-guest/abi"
 	"github.com/tinfoilsh/go-sev-guest/kds"
-	"github.com/google/uuid"
+	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 )
 
 func TestCertificatesParse(t *testing.T) {
@@ -119,5 +121,69 @@ func TestCertificatesExtras(t *testing.T) {
 	}
 	if !hasXtra {
 		t.Errorf("fake certs missing extra cert")
+	}
+}
+
+func TestTurinCertificatesAndFakeKDS(t *testing.T) {
+	const turinTCB = uint64(0x5200000004010101)
+	now := time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC)
+	builder := &AmdSignerBuilder{
+		ProductName:      "Turin-B1",
+		ArkCreationTime:  now,
+		AskCreationTime:  now,
+		AsvkCreationTime: now,
+		VcekCreationTime: now,
+		VlekCreationTime: now,
+		CSPID:            "go-sev-guest",
+		TCB:              kds.TCBVersion(turinTCB), //nolint:staticcheck
+	}
+	copy(builder.HWID[:], []byte{0x6b, 0xb1, 0x22, 0x9b, 0x76, 0x92, 0xb7, 0x10})
+
+	signer, err := builder.TestOnlyCertChain()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signer.Product.GetName() != spb.SevProduct_SEV_PRODUCT_TURIN {
+		t.Fatalf("fake signer product is %v, want Turin", signer.Product)
+	}
+	if stepping := signer.Product.GetMachineStepping().GetValue(); stepping != 1 {
+		t.Fatalf("fake signer stepping is %d, want Turin-B1 stepping 1", stepping)
+	}
+	extensions, err := kds.VcekCertificateExtensions(signer.Vcek)
+	if err != nil {
+		t.Fatalf("could not parse fake Turin VCEK: %v", err)
+	}
+	if extensions.StructVersion != 1 || extensions.ProductName != "Turin" {
+		t.Fatalf("fake Turin VCEK has struct version %d and product %q", extensions.StructVersion, extensions.ProductName)
+	}
+	if !reflect.DeepEqual(extensions.HWID, builder.HWID[:8]) {
+		t.Fatalf("fake Turin VCEK HWID is %x, want %x", extensions.HWID, builder.HWID[:8])
+	}
+	if extensions.TCBVersionStruct.TCB != turinTCB {
+		t.Fatalf("fake Turin VCEK TCB is 0x%x, want 0x%x", extensions.TCBVersionStruct.TCB, turinTCB)
+	}
+
+	fakeKDS, err := FakeKDSFromSigner(signer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, stepping := abi.FmsFromCpuid1Eax(fakeKDS.Certs.GetChipCerts()[0].GetFms())
+	if stepping != 1 {
+		t.Fatalf("fake KDS FMS has stepping %d, want Turin-B1 stepping 1", stepping)
+	}
+	tcb, err := kds.NewTCBVersionStruct("Turin", turinTCB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	url, err := kds.VCEKCertQuery("Turin", builder.HWID[:], *tcb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := fakeKDS.Get(url)
+	if err != nil {
+		t.Fatalf("fake KDS did not serve Turin VCEK: %v", err)
+	}
+	if !bytes.Equal(got, signer.Vcek.Raw) {
+		t.Fatal("fake KDS returned the wrong Turin VCEK")
 	}
 }

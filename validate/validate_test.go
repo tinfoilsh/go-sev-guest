@@ -484,6 +484,85 @@ func TestValidateSnpAttestation(t *testing.T) {
 	}
 }
 
+func TestValidateVCEKChipID(t *testing.T) {
+	turinHWID := []byte{0x6b, 0xb1, 0x22, 0x9b, 0x76, 0x92, 0xb7, 0x10}
+	turinChipID := make([]byte, abi.ChipIDSize)
+	copy(turinChipID, turinHWID)
+	legacyChipID := bytes.Repeat([]byte{0x5a}, abi.ChipIDSize)
+
+	tests := []struct {
+		name     string
+		reportID []byte
+		certID   []byte
+		wantErr  string
+	}{
+		{name: "Turin", reportID: turinChipID, certID: turinHWID},
+		{name: "legacy", reportID: legacyChipID, certID: legacyChipID},
+		{name: "masked", reportID: make([]byte, abi.ChipIDSize), certID: turinHWID},
+		{name: "mismatch", reportID: turinChipID, certID: bytes.Repeat([]byte{0xff}, len(turinHWID)), wantErr: "not the same"},
+		{name: "bad report size", reportID: make([]byte, abi.ChipIDSize-1), certID: turinHWID, wantErr: "CHIP_ID has size"},
+		{name: "bad certificate size", reportID: turinChipID, certID: make([]byte, 7), wantErr: "unsupported size"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateVCEKChipID(tc.reportID, tc.certID)
+			if (err == nil && tc.wantErr != "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("validateVCEKChipID() returned %v, want error containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestReportTCBFormat(t *testing.T) {
+	turinTCB, err := kds.NewTCBVersionStruct("Turin", 0x5200000004010101)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyTCB, err := kds.NewTCBVersionStruct("Milan", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	turinFMS := abi.MaskedCpuid1EaxFromSevProduct(&spb.SevProduct{Name: spb.SevProduct_SEV_PRODUCT_TURIN})
+	genoaFMS := abi.MaskedCpuid1EaxFromSevProduct(&spb.SevProduct{Name: spb.SevProduct_SEV_PRODUCT_GENOA})
+	sienaFMS := abi.FmsToCpuid1Eax(0x19, 0xa0, 0)
+
+	tests := []struct {
+		name    string
+		report  *spb.Report
+		certTCB kds.TCBVersionStruct
+		wantErr string
+	}{
+		{name: "Turin", report: &spb.Report{Version: abi.ReportVersion3, Cpuid1EaxFms: turinFMS, ReportedTcb: turinTCB.TCB}, certTCB: *turinTCB},
+		{name: "Siena", report: &spb.Report{Version: abi.ReportVersion3, Cpuid1EaxFms: sienaFMS}, certTCB: *legacyTCB},
+		{name: "legacy v2", report: &spb.Report{Version: 2}, certTCB: *legacyTCB},
+		{name: "product mismatch", report: &spb.Report{Version: abi.ReportVersion3, Cpuid1EaxFms: genoaFMS}, certTCB: *turinTCB, wantErr: "different TCB formats"},
+		{name: "Turin certificate with v2 report", report: &spb.Report{Version: 2}, certTCB: *turinTCB, wantErr: "non-legacy TCB format"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := getReportTcbs(tc.report, tc.certTCB)
+			if (err == nil && tc.wantErr != "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("getReportTcbs() returned %v, want error containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateIOMMUWriteSafe(t *testing.T) {
+	if err := validatePlatformInfo(1<<6, &abi.SnpPlatformInfo{}); err != nil {
+		t.Fatalf("validatePlatformInfo() rejected IOMMU_WRITE_SAFE: %v", err)
+	}
+	if err := validatePlatformInfo(0, &abi.SnpPlatformInfo{IOMMUWriteSafe: true}); err == nil || !strings.Contains(err.Error(), "IOMMU write-safe") {
+		t.Fatalf("validatePlatformInfo() returned %v, want missing mitigation error", err)
+	}
+	if err := validatePlatformInfo(1<<6, &abi.SnpPlatformInfo{IOMMUWriteSafe: true}); err != nil {
+		t.Fatalf("validatePlatformInfo() rejected required IOMMU_WRITE_SAFE: %v", err)
+	}
+	if err := validatePlatformInfo((1<<6)|(1<<8), &abi.SnpPlatformInfo{}); err == nil || !strings.Contains(err.Error(), "unrecognized platform info bit") {
+		t.Fatalf("validatePlatformInfo() returned %v, want another reserved-bit error", err)
+	}
+}
+
 func TestCertTableOptions(t *testing.T) {
 	sign0, err := test.DefaultTestOnlyCertChain(test.GetProductName(), time.Now())
 	if err != nil {

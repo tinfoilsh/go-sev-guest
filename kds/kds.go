@@ -460,7 +460,8 @@ func DecomposeTCBVersionStruct(t any) (TCBParts, error) {
 
 // TCBPartsLE returns true iff all TCB components of tcb0 are <= the corresponding tcb1 components.
 func TCBPartsLE(tcb0, tcb1 TCBParts) bool {
-	return (tcb0.UcodeSpl <= tcb1.UcodeSpl) &&
+	return tcb0.version == tcb1.version &&
+		(tcb0.UcodeSpl <= tcb1.UcodeSpl) &&
 		(tcb0.SnpSpl <= tcb1.SnpSpl) &&
 		(tcb0.Spl7 <= tcb1.Spl7) &&
 		(tcb0.Spl6 <= tcb1.Spl6) &&
@@ -989,15 +990,6 @@ func parseTCBURL(u *url.URL, tcbVersion uint8) (uint64, error) {
 			setter(uint8(number))
 		}
 	}
-	required := []string{"blSPL", "teeSPL", "snpSPL", "ucodeSPL"}
-	if tcbVersion == tcbStructVersion1 {
-		required = append(required, "fmcSPL")
-	}
-	for _, key := range required {
-		if !values.Has(key) {
-			return 0, fmt.Errorf("missing KDS TCB version URL argument %q", key)
-		}
-	}
 	tcb, err := parts.ToTCBVersionStruct()
 	if err != nil {
 		return 0, fmt.Errorf("invalid AMD KDS TCB arguments: %v", err)
@@ -1009,7 +1001,7 @@ func parseTCBURL(u *url.URL, tcbVersion uint8) (uint64, error) {
 // in V{C,L}EK x509 extensions
 func productLineToTCBVersion(productLine string) (uint8, error) {
 	switch productLine {
-	case "Milan", "Genoa":
+	case "Milan", "Genoa", "Siena":
 		return tcbStructVersion0, nil
 	case "Turin":
 		return tcbStructVersion1, nil
@@ -1168,7 +1160,24 @@ func ProductName(product *pb.SevProduct) string {
 
 // ProductLineFromFms returns the product name used in the KDS endpoint to fetch VCEK certificates.
 func ProductLineFromFms(fms uint32) string {
-	return ProductLine(abi.SevProductFromCpuid1Eax(fms))
+	family, model, _ := abi.FmsFromCpuid1Eax(fms)
+	switch family {
+	case 0x19:
+		switch model >> 4 {
+		case 0:
+			return "Milan"
+		case 1:
+			return "Genoa"
+		case 0xa:
+			return "Siena"
+		}
+	case 0x1a:
+		// The KDS specification assigns extended models 0h and 1h to Turin.
+		if extendedModel := model >> 4; extendedModel == 0 || extendedModel == 1 {
+			return "Turin"
+		}
+	}
+	return "Unknown"
 }
 
 // ParseProduct returns the SevProductName for a product name without the stepping suffix.

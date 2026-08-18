@@ -169,8 +169,25 @@ func TestNewTCBParts(t *testing.T) {
 	if _, err := NewTCBParts("Genoa", TCBParts{FmcSpl: 1}); err == nil {
 		t.Fatal("NewTCBParts accepted FMC for Genoa")
 	}
+	if _, err := NewTCBParts("Siena", TCBParts{FmcSpl: 1}); err == nil {
+		t.Fatal("NewTCBParts accepted FMC for Siena")
+	}
 	if _, err := NewTCBParts("Venice", TCBParts{}); err == nil {
 		t.Fatal("NewTCBParts accepted an unknown product")
+	}
+}
+
+func TestTCBPartsLERejectsDifferentFormats(t *testing.T) {
+	legacy, err := NewTCBParts("Genoa", TCBParts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	turin, err := NewTCBParts("Turin", TCBParts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if TCBPartsLE(legacy, turin) || TCBPartsLE(turin, legacy) {
+		t.Fatal("TCBPartsLE considered categorically different TCB formats comparable")
 	}
 }
 
@@ -181,11 +198,6 @@ func TestParseTCBURLStrictness(t *testing.T) {
 		url     string
 		wantErr string
 	}{
-		{
-			name:    "missing argument",
-			url:     fmt.Sprintf("https://kdsintf.amd.com/vcek/v1/Milan/%s?blSPL=0&teeSPL=0&snpSPL=0", hwid),
-			wantErr: "missing KDS TCB version URL argument \"ucodeSPL\"",
-		},
 		{
 			name:    "duplicate argument",
 			url:     fmt.Sprintf("https://kdsintf.amd.com/vcek/v1/Milan/%s?blSPL=0&blSPL=1&teeSPL=0&snpSPL=0&ucodeSPL=0", hwid),
@@ -202,6 +214,50 @@ func TestParseTCBURLStrictness(t *testing.T) {
 			_, err := ParseVCEKCertURL(tc.url)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("ParseVCEKCertURL() returned %v, want error containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestParseTCBURLOmittedParametersDefaultToZero(t *testing.T) {
+	turinHWID := "6bb1229b7692b710"
+	parsed, err := ParseVCEKCertURL(fmt.Sprintf("https://kdsintf.amd.com/vcek/v1/Turin/%s?snpSPL=4", turinHWID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.TCB != 0x0000000004000000 {
+		t.Fatalf("abbreviated Turin URL parsed TCB 0x%x, want 0x0000000004000000", parsed.TCB)
+	}
+
+	sienaHWID := strings.Repeat("00", abi.ChipIDSize)
+	parsed, err = ParseVCEKCertURL(fmt.Sprintf("https://kdsintf.amd.com/vcek/v1/Siena/%s?snpSPL=4", sienaHWID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.ProductLine != "Siena" || parsed.TCB != 0x0004000000000000 {
+		t.Fatalf("abbreviated Siena URL parsed as product %q TCB 0x%x", parsed.ProductLine, parsed.TCB)
+	}
+}
+
+func TestProductLineFromFms(t *testing.T) {
+	tests := []struct {
+		name   string
+		family byte
+		model  byte
+		want   string
+	}{
+		{name: "Milan", family: 0x19, model: 0x01, want: "Milan"},
+		{name: "Genoa", family: 0x19, model: 0x11, want: "Genoa"},
+		{name: "Siena", family: 0x19, model: 0xa0, want: "Siena"},
+		{name: "Turin extended model 0", family: 0x1a, model: 0x02, want: "Turin"},
+		{name: "Turin extended model 1", family: 0x1a, model: 0x10, want: "Turin"},
+		{name: "unknown", family: 0x18, model: 0x00, want: "Unknown"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fms := abi.FmsToCpuid1Eax(tc.family, tc.model, 3)
+			if got := ProductLineFromFms(fms); got != tc.want {
+				t.Fatalf("ProductLineFromFms(0x%x) = %q, want %q", fms, got, tc.want)
 			}
 		})
 	}

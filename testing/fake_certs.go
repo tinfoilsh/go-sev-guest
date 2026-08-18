@@ -529,7 +529,12 @@ func (b *AmdSignerBuilder) TestOnlyCertChain() (*AmdSigner, error) {
 			return nil, fmt.Errorf("vlek creation error: %v", err)
 		}
 	}
-	product, err := kds.ParseProductLine(b.productLine())
+	product, err := kds.ParseProductName(b.productName(), abi.VcekReportSigner)
+	if err != nil {
+		// Some products, including current Turin certificates, use only the
+		// product line in the VCEK productName extension.
+		product, err = kds.ParseProductLine(b.productLine())
+	}
 	if err != nil {
 		return nil, fmt.Errorf("product parsing error: %v", err)
 	}

@@ -231,3 +231,29 @@ func TestTransform(t *testing.T) {
 		}
 	})
 }
+
+func TestTransformTCB(t *testing.T) {
+	mu.Do(initDevice)
+	if _, err := Transform(input.attestation, "tcb"); err != nil {
+		t.Fatalf("Transform(v2, \"tcb\") errored unexpectedly: %v", err)
+	}
+
+	const turinTCB = uint64(0x5200000004010101)
+	report := &spb.Report{
+		Version:      abi.ReportVersion3,
+		Cpuid1EaxFms: abi.MaskedCpuid1EaxFromSevProduct(&spb.SevProduct{Name: spb.SevProduct_SEV_PRODUCT_TURIN}),
+		CurrentTcb:   turinTCB,
+		CommittedTcb: turinTCB,
+		LaunchTcb:    turinTCB,
+	}
+	got, err := Transform(&spb.Attestation{Report: report}, "tcb")
+	if err != nil {
+		t.Fatalf("Transform(Turin, \"tcb\") errored unexpectedly: %v", err)
+	}
+	want := "current_tcb={FmcSpl:1 BlSpl:1 TeeSpl:1 SnpSpl:4 UcodeSpl:82}\n" +
+		"committed_tcb={FmcSpl:1 BlSpl:1 TeeSpl:1 SnpSpl:4 UcodeSpl:82}\n" +
+		"launch_tcb={FmcSpl:1 BlSpl:1 TeeSpl:1 SnpSpl:4 UcodeSpl:82}\n"
+	if string(got) != want {
+		t.Fatalf("Transform(Turin, \"tcb\") = %q, want %q", got, want)
+	}
+}

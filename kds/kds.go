@@ -23,7 +23,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/url"
-	"reflect"
 	"strconv"
 	"strings"
 
@@ -171,6 +170,12 @@ func (v TCBVersionStruct) ToTCBVersion() TCBVersion {
 func (v TCBVersionStruct) ToTCBParts() (TCBParts, error) {
 	switch v.version {
 	case tcbStructVersion1:
+		// Turin reserves bits 55:32. Rejecting non-zero values keeps them
+		// from disappearing when the structured representation is composed
+		// again for certificate/report equality checks.
+		if reserved := v.TCB & 0x00ffffff00000000; reserved != 0 {
+			return TCBParts{}, fmt.Errorf("non-zero reserved bits in Turin TCB: 0x%x", reserved)
+		}
 		return TCBParts{
 			version:  v.version,
 			UcodeSpl: uint8((v.TCB >> 56) & 0xff),
@@ -205,6 +210,18 @@ func NewTCBVersionStruct(productLine string, tcb uint64) (*TCBVersionStruct, err
 	default:
 		return &TCBVersionStruct{version: tcbStructVersion0, TCB: tcb}, nil
 	}
+}
+
+// WithTCB returns a TCB value interpreted with the same product-specific
+// layout as v. This is useful for reports that carry several TCB fields.
+func (v TCBVersionStruct) WithTCB(tcb uint64) TCBVersionStruct {
+	return TCBVersionStruct{version: v.version, TCB: tcb}
+}
+
+// SameFormat reports whether two TCB values use the same product-specific
+// bit layout.
+func (v TCBVersionStruct) SameFormat(other TCBVersionStruct) bool {
+	return v.version == other.version
 }
 
 // Extensions represents the information stored in the KDS-specified x509 extensions of a V{C,L}EK
@@ -309,6 +326,22 @@ type TCBParts struct {
 	FmcSpl uint8
 }
 
+// NewTCBParts validates and tags TCB component values with the layout used by
+// productLine. Callers outside this package should use this constructor when
+// creating policy values for products whose TCB layout is not version 0.
+func NewTCBParts(productLine string, parts TCBParts) (TCBParts, error) {
+	c := cases.Title(language.English)
+	version, err := productLineToTCBVersion(c.String(productLine))
+	if err != nil {
+		return TCBParts{}, err
+	}
+	parts.version = version
+	if _, err := parts.ToTCBVersionStruct(); err != nil {
+		return TCBParts{}, err
+	}
+	return parts, nil
+}
+
 // ToTCBVersionStruct converts the object to TCBVersionStruct
 func (parts TCBParts) ToTCBVersionStruct() (TCBVersionStruct, error) {
 	var tcbVersion TCBVersionStruct
@@ -333,6 +366,9 @@ func (parts TCBParts) ToTCBVersionStruct() (TCBVersionStruct, error) {
 
 	switch parts.version {
 	case tcbStructVersion0:
+		if parts.FmcSpl != 0 {
+			return tcbVersion, fmt.Errorf("FmcSpl is not defined for TCB struct version 0")
+		}
 		tcbVersion.version = tcbStructVersion0
 		tcbVersion.TCB = (uint64(parts.UcodeSpl) << 56) |
 			(uint64(parts.SnpSpl) << 48) |
@@ -343,6 +379,9 @@ func (parts TCBParts) ToTCBVersionStruct() (TCBVersionStruct, error) {
 			(uint64(parts.TeeSpl) << 8) |
 			(uint64(parts.BlSpl) << 0)
 	case tcbStructVersion1:
+		if parts.Spl4 != 0 || parts.Spl5 != 0 || parts.Spl6 != 0 || parts.Spl7 != 0 {
+			return tcbVersion, fmt.Errorf("reserved Turin TCB components must be zero")
+		}
 		tcbVersion.version = tcbStructVersion1
 		tcbVersion.TCB = (uint64(parts.UcodeSpl) << 56) |
 			(uint64(parts.SnpSpl) << 24) |
@@ -359,8 +398,8 @@ func (parts TCBParts) ToTCBVersionStruct() (TCBVersionStruct, error) {
 func (parts TCBParts) String() string {
 	switch parts.version {
 	case tcbStructVersion1:
-		return fmt.Sprintf("{BlSpl:%d TeeSpl:%d Spl5:%d Spl6:%d Spl7:%d SnpSpl:%d UcodeSpl:%d FmcSpl: %d}",
-			parts.BlSpl, parts.TeeSpl, parts.Spl5, parts.Spl6, parts.Spl7, parts.SnpSpl, parts.UcodeSpl, parts.FmcSpl)
+		return fmt.Sprintf("{FmcSpl:%d BlSpl:%d TeeSpl:%d SnpSpl:%d UcodeSpl:%d}",
+			parts.FmcSpl, parts.BlSpl, parts.TeeSpl, parts.SnpSpl, parts.UcodeSpl)
 	default:
 		return fmt.Sprintf("{BlSpl:%d TeeSpl:%d Spl4:%d Spl5:%d Spl6:%d Spl7:%d SnpSpl:%d UcodeSpl:%d}",
 			parts.BlSpl, parts.TeeSpl, parts.Spl4, parts.Spl5, parts.Spl6, parts.Spl7, parts.SnpSpl, parts.UcodeSpl)
@@ -370,7 +409,7 @@ func (parts TCBParts) String() string {
 // ComposeTCBParts returns an SEV-SNP TCB_VERSION from OID mapping values. The spl4-spl7 fields are
 // reserved, but the KDS specification designates them as 4 byte-sized fields.
 //
-// Deprecated: use ComposeTCBPartsToTCBVersionStruct instead
+// Deprecated: use TCBParts.ToTCBVersionStruct instead.
 func ComposeTCBParts(parts TCBParts) (TCBVersion, error) {
 	tcb, err := parts.ToTCBVersionStruct()
 	if err != nil {
@@ -395,18 +434,20 @@ func DecomposeTCBVersion(tcb TCBVersion) TCBParts {
 func DecomposeTCBVersionStruct(t any) (TCBParts, error) {
 	var tcb TCBVersionStruct
 
-	if reflect.ValueOf(t).Kind() == reflect.Ptr && reflect.ValueOf(t).IsNil() {
-		return TCBParts{}, fmt.Errorf("error decomposing TCBVersionStruct: %v is nil", reflect.ValueOf(t).Type())
-	}
-
 	switch v := t.(type) {
 	case TCBVersionStruct:
 		tcb = v
 	case *TCBVersionStruct:
+		if v == nil {
+			return TCBParts{}, fmt.Errorf("cannot decompose a nil *TCBVersionStruct")
+		}
 		tcb = *v
 	case TCBVersion:
 		tcb.FromTCBVersion(v)
 	case *TCBVersion:
+		if v == nil {
+			return TCBParts{}, fmt.Errorf("cannot decompose a nil *TCBVersion")
+		}
 		tcb.FromTCBVersion(*v)
 	case uint64:
 		tcb = TCBVersionStruct{version: tcbStructVersion0, TCB: v}
@@ -419,7 +460,8 @@ func DecomposeTCBVersionStruct(t any) (TCBParts, error) {
 
 // TCBPartsLE returns true iff all TCB components of tcb0 are <= the corresponding tcb1 components.
 func TCBPartsLE(tcb0, tcb1 TCBParts) bool {
-	return (tcb0.UcodeSpl <= tcb1.UcodeSpl) &&
+	return tcb0.version == tcb1.version &&
+		(tcb0.UcodeSpl <= tcb1.UcodeSpl) &&
 		(tcb0.SnpSpl <= tcb1.SnpSpl) &&
 		(tcb0.Spl7 <= tcb1.Spl7) &&
 		(tcb0.Spl6 <= tcb1.Spl6) &&
@@ -555,10 +597,16 @@ func kdsOidMapToExtensions(exts map[kdsOID]*pkix.Extension) (*Extensions, error)
 
 	switch result.StructVersion {
 	case tcbStructVersion0:
+		if exts[kdsFmcSpl] != nil {
+			return nil, fmt.Errorf("FmcSpl extension is not valid for TCB struct version 0")
+		}
 		if err := asn1U8(exts[kdsSpl4], "Spl4", &spl4); err != nil {
 			return nil, err
 		}
 	case tcbStructVersion1:
+		if exts[kdsSpl4] != nil {
+			return nil, fmt.Errorf("Spl4 extension is not valid for TCB struct version 1")
+		}
 		if err := asn1U8(exts[kdsFmcSpl], "FmcSpl", &fmcspl); err != nil {
 			return nil, err
 		}
@@ -698,6 +746,14 @@ func ProductCertChainURL(s abi.ReportSigner, productLine string) string {
 // VCEKCertQuery returns the AMD KDS URL for retrieving the VCEK on a given product
 // at a given TCB version. The hwid is the CHIP_ID field in an attestation report.
 func VCEKCertQuery(productLine string, hwid []byte, tcb TCBVersionStruct) (string, error) {
+	wantVersion, err := productLineToTCBVersion(productLine)
+	if err != nil {
+		return "", err
+	}
+	if tcb.version != wantVersion {
+		return "", fmt.Errorf("TCB struct version %d is incompatible with product line %q", tcb.version, productLine)
+	}
+
 	parts, err := DecomposeTCBVersionStruct(tcb)
 	if err != nil {
 		return "", err
@@ -705,6 +761,9 @@ func VCEKCertQuery(productLine string, hwid []byte, tcb TCBVersionStruct) (strin
 
 	switch parts.version {
 	case tcbStructVersion1:
+		if len(hwid) != tcbHwIDLenVersion1 && len(hwid) != abi.ChipIDSize {
+			return "", fmt.Errorf("invalid Turin HWID size %d, want %d or %d", len(hwid), tcbHwIDLenVersion1, abi.ChipIDSize)
+		}
 		hwidv1 := hwid[:tcbHwIDLenVersion1]
 		return fmt.Sprintf("%s/%s?blSPL=%d&teeSPL=%d&snpSPL=%d&ucodeSPL=%d&fmcSPL=%d",
 			productBaseURL(abi.VcekReportSigner, productLine),
@@ -716,6 +775,9 @@ func VCEKCertQuery(productLine string, hwid []byte, tcb TCBVersionStruct) (strin
 			parts.FmcSpl,
 		), nil
 	default:
+		if len(hwid) != abi.ChipIDSize {
+			return "", fmt.Errorf("%s HWID has size %d, want %d", productLine, len(hwid), abi.ChipIDSize)
+		}
 		return fmt.Sprintf("%s/%s?blSPL=%d&teeSPL=%d&snpSPL=%d&ucodeSPL=%d",
 			productBaseURL(abi.VcekReportSigner, productLine),
 			hex.EncodeToString(hwid),
@@ -732,15 +794,25 @@ func VCEKCertQuery(productLine string, hwid []byte, tcb TCBVersionStruct) (strin
 //
 // Deprecated: use VCEKCertQuery instead
 func VCEKCertURL(productLine string, hwid []byte, tcb TCBVersion) string {
-	var t TCBVersionStruct
-	t.FromTCBVersion(tcb)
-	vcekURL, _ := VCEKCertQuery(productLine, hwid, t)
+	t, err := NewTCBVersionStruct(productLine, uint64(tcb))
+	if err != nil {
+		return ""
+	}
+	vcekURL, _ := VCEKCertQuery(productLine, hwid, *t)
 	return vcekURL
 }
 
 // VLEKCertQuery returns the GET URL for retrieving a VLEK certificate, but without the necessary
 // CSP secret in the HTTP headers that makes the request validate to the KDS.
 func VLEKCertQuery(productLine string, tcb TCBVersionStruct) (string, error) {
+	wantVersion, err := productLineToTCBVersion(productLine)
+	if err != nil {
+		return "", err
+	}
+	if tcb.version != wantVersion {
+		return "", fmt.Errorf("TCB struct version %d is incompatible with product line %q", tcb.version, productLine)
+	}
+
 	parts, err := DecomposeTCBVersionStruct(tcb)
 	if err != nil {
 		return "", err
@@ -772,9 +844,11 @@ func VLEKCertQuery(productLine string, tcb TCBVersionStruct) (string, error) {
 //
 // Deprecated: use VLEKCertQuery instead
 func VLEKCertURL(productLine string, tcb TCBVersion) string {
-	var t TCBVersionStruct
-	t.FromTCBVersion(tcb)
-	vlekURL, _ := VLEKCertQuery(productLine, t)
+	t, err := NewTCBVersionStruct(productLine, uint64(tcb))
+	if err != nil {
+		return ""
+	}
+	vlekURL, _ := VLEKCertQuery(productLine, *t)
 	return vlekURL
 }
 
@@ -887,6 +961,9 @@ func parseTCBURL(u *url.URL, tcbVersion uint8) (uint64, error) {
 	}
 	parts := TCBParts{version: tcbVersion}
 	for key, valuelist := range values {
+		if len(valuelist) != 1 {
+			return 0, fmt.Errorf("KDS TCB version URL argument %q must occur exactly once", key)
+		}
 		var setter func(number uint8)
 		switch key {
 		case "blSPL":
@@ -898,6 +975,9 @@ func parseTCBURL(u *url.URL, tcbVersion uint8) (uint64, error) {
 		case "ucodeSPL":
 			setter = func(number uint8) { parts.UcodeSpl = number }
 		case "fmcSPL":
+			if tcbVersion != tcbStructVersion1 {
+				return 0, fmt.Errorf("KDS TCB version URL argument %q is not valid for TCB struct version %d", key, tcbVersion)
+			}
 			setter = func(number uint8) { parts.FmcSpl = number }
 		default:
 			return 0, fmt.Errorf("unexpected KDS TCB version URL argument %q", key)
@@ -920,14 +1000,13 @@ func parseTCBURL(u *url.URL, tcbVersion uint8) (uint64, error) {
 // productLineToTCBVersion maps the product line to the TCB version they use
 // in V{C,L}EK x509 extensions
 func productLineToTCBVersion(productLine string) (uint8, error) {
-	c := cases.Title(language.English)
-	switch c.String(productLine) {
-	case "Milan", "Genoa":
+	switch productLine {
+	case "Milan", "Genoa", "Siena":
 		return tcbStructVersion0, nil
 	case "Turin":
 		return tcbStructVersion1, nil
 	default:
-		return 0, fmt.Errorf("invalid product line %s", productLine)
+		return 0, fmt.Errorf("invalid product line %q", productLine)
 	}
 }
 
@@ -944,20 +1023,24 @@ func ParseVCEKCertURL(kdsurl string) (VCEKCert, error) {
 	}
 	result.Product = parsed.productLine // TODO(Issue#114): Remove.
 	result.ProductLine = parsed.productLine
-	hwid, err := hex.DecodeString(parsed.simpleURL.Path)
-	if err != nil {
-		return result, fmt.Errorf("hwid component of KDS URL is not a hex string: %q", parsed.simpleURL.Path)
-	}
-	if len(hwid) != abi.ChipIDSize {
-		return result, fmt.Errorf("hwid component of KDS URL has size %d, want %d", len(hwid), abi.ChipIDSize)
-	}
-
-	result.HWID = hwid
-
 	tcbVersion, err := productLineToTCBVersion(result.ProductLine)
 	if err != nil {
 		return result, err
 	}
+
+	hwid, err := hex.DecodeString(parsed.simpleURL.Path)
+	if err != nil {
+		return result, fmt.Errorf("hwid component of KDS URL is not a hex string: %q", parsed.simpleURL.Path)
+	}
+	wantHWIDLen := tcbHwIDLenVersion0
+	if tcbVersion == tcbStructVersion1 {
+		wantHWIDLen = tcbHwIDLenVersion1
+	}
+	if len(hwid) != wantHWIDLen {
+		return result, fmt.Errorf("hwid component of KDS URL has size %d, want %d for %s", len(hwid), wantHWIDLen, result.ProductLine)
+	}
+
+	result.HWID = hwid
 
 	result.TCB, err = parseTCBURL(parsed.simpleURL, tcbVersion)
 	return result, err
@@ -1077,7 +1160,24 @@ func ProductName(product *pb.SevProduct) string {
 
 // ProductLineFromFms returns the product name used in the KDS endpoint to fetch VCEK certificates.
 func ProductLineFromFms(fms uint32) string {
-	return ProductLine(abi.SevProductFromCpuid1Eax(fms))
+	family, model, _ := abi.FmsFromCpuid1Eax(fms)
+	switch family {
+	case 0x19:
+		switch model >> 4 {
+		case 0:
+			return "Milan"
+		case 1:
+			return "Genoa"
+		case 0xa:
+			return "Siena"
+		}
+	case 0x1a:
+		// The KDS specification assigns extended models 0h and 1h to Turin.
+		if extendedModel := model >> 4; extendedModel == 0 || extendedModel == 1 {
+			return "Turin"
+		}
+	}
+	return "Unknown"
 }
 
 // ParseProduct returns the SevProductName for a product name without the stepping suffix.

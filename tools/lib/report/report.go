@@ -136,11 +136,14 @@ func tcbBreakdown(productLine string, tcb uint64) (string, error) {
 }
 
 func tcbText(report *spb.Attestation) ([]byte, error) {
-	fms := report.GetReport().GetCpuid1EaxFms()
+	productLine := "Milan"
+	if report.GetReport().GetVersion() >= abi.ReportVersion3 {
+		productLine = kds.ProductLineFromFms(report.GetReport().GetCpuid1EaxFms())
+	}
 
-	currentTcb, currentTcbErr := tcbBreakdown(kds.ProductLineFromFms(fms), report.Report.GetCurrentTcb())
-	committedTcb, committedTcbErr := tcbBreakdown(kds.ProductLineFromFms(fms), report.Report.GetCommittedTcb())
-	launchTcb, launchTcbErr := tcbBreakdown(kds.ProductLineFromFms(fms), report.Report.GetLaunchTcb())
+	currentTcb, currentTcbErr := tcbBreakdown(productLine, report.Report.GetCurrentTcb())
+	committedTcb, committedTcbErr := tcbBreakdown(productLine, report.Report.GetCommittedTcb())
+	launchTcb, launchTcbErr := tcbBreakdown(productLine, report.Report.GetLaunchTcb())
 	err := multierr.Combine(currentTcbErr, committedTcbErr, launchTcbErr)
 	if err != nil {
 		return nil, err

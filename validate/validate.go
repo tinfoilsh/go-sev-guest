@@ -392,23 +392,36 @@ type reportTcbDescriptions struct {
 }
 
 func getReportTcbs(report *spb.Report, certTcb kds.TCBVersionStruct) (*reportTcbDescriptions, error) {
-	fms := report.GetCpuid1EaxFms()
-
-	reportedTCBVersionStruct, reportedTcbErr := kds.NewTCBVersionStruct(kds.ProductLineFromFms(fms), report.GetReportedTcb())
-	currentTCBVersionStruct, currentTcbErr := kds.NewTCBVersionStruct(kds.ProductLineFromFms(fms), report.GetCurrentTcb())
-	committedTCBVersionStruct, committedTcbErr := kds.NewTCBVersionStruct(kds.ProductLineFromFms(fms), report.GetCommittedTcb())
-	launchTCBVersionStruct, launchTcbErr := kds.NewTCBVersionStruct(kds.ProductLineFromFms(fms), report.GetLaunchTcb())
-	err := multierr.Combine(reportedTcbErr, currentTcbErr, committedTcbErr, launchTcbErr)
-	if err != nil {
-		return nil, err
+	layout := certTcb
+	if report.GetVersion() >= abi.ReportVersion3 {
+		productLine := kds.ProductLineFromFms(report.GetCpuid1EaxFms())
+		reportLayout, err := kds.NewTCBVersionStruct(productLine, 0)
+		if err != nil {
+			return nil, fmt.Errorf("could not determine report TCB format: %v", err)
+		}
+		if !reportLayout.SameFormat(certTcb) {
+			return nil, fmt.Errorf("report product %q and V[CL]EK certificate use different TCB formats", productLine)
+		}
+		layout = *reportLayout
+	} else {
+		// Reports before version 3 do not carry CPUID product identity and
+		// predate the Turin TCB layout. Do not let a version-1 certificate
+		// reinterpret their TCB fields.
+		legacyLayout, err := kds.NewTCBVersionStruct("Milan", 0)
+		if err != nil {
+			return nil, err
+		}
+		if !legacyLayout.SameFormat(certTcb) {
+			return nil, fmt.Errorf("report version %d cannot be used with a non-legacy TCB format", report.GetVersion())
+		}
 	}
 
-	reportedTCBParts, reportedTcbErr := kds.DecomposeTCBVersionStruct(reportedTCBVersionStruct)
-	currentTCBParts, currentTcbErr := kds.DecomposeTCBVersionStruct(currentTCBVersionStruct)
-	committedTCBParts, committedTcbErr := kds.DecomposeTCBVersionStruct(committedTCBVersionStruct)
-	launchTCBParts, launchTcbErr := kds.DecomposeTCBVersionStruct(launchTCBVersionStruct)
+	reportedTCBParts, reportedTcbErr := kds.DecomposeTCBVersionStruct(layout.WithTCB(report.GetReportedTcb()))
+	currentTCBParts, currentTcbErr := kds.DecomposeTCBVersionStruct(layout.WithTCB(report.GetCurrentTcb()))
+	committedTCBParts, committedTcbErr := kds.DecomposeTCBVersionStruct(layout.WithTCB(report.GetCommittedTcb()))
+	launchTCBParts, launchTcbErr := kds.DecomposeTCBVersionStruct(layout.WithTCB(report.GetLaunchTcb()))
 	certTCBParts, certTcbErr := kds.DecomposeTCBVersionStruct(certTcb)
-	err = multierr.Combine(reportedTcbErr, currentTcbErr, committedTcbErr, launchTcbErr, certTcbErr)
+	err := multierr.Combine(reportedTcbErr, currentTcbErr, committedTcbErr, launchTcbErr, certTcbErr)
 	if err != nil {
 		return nil, err
 	}
@@ -460,12 +473,39 @@ func getPolicyTcbs(options *Options) *policyTcbDescriptions {
 
 // tcbNeError return an error if the two TCBs are not equal
 func tcbNeError(left, right partDescription) error {
-	ltcb, _ := left.parts.ToTCBVersionStruct()
-	rtcb, _ := right.parts.ToTCBVersionStruct()
+	ltcb, leftErr := left.parts.ToTCBVersionStruct()
+	rtcb, rightErr := right.parts.ToTCBVersionStruct()
+	if err := multierr.Combine(leftErr, rightErr); err != nil {
+		return fmt.Errorf("could not compare TCB values: %v", err)
+	}
 	if ltcb == rtcb {
 		return nil
 	}
 	return fmt.Errorf("the %s %s does not match the %s %s", left.desc, ltcb.String(), right.desc, rtcb.String())
+}
+
+func validateVCEKChipID(reportChipID, certificateHWID []byte) error {
+	if len(reportChipID) != abi.ChipIDSize {
+		return fmt.Errorf("report field CHIP_ID has size %d, want %d", len(reportChipID), abi.ChipIDSize)
+	}
+	if allZero(reportChipID) {
+		return nil
+	}
+
+	var reportHWID []byte
+	switch len(certificateHWID) {
+	case abi.ChipIDSize:
+		reportHWID = reportChipID
+	case 8: // Turin and later use an 8-byte PSN-based HWID in VCEK certificates.
+		reportHWID = reportChipID[:8]
+	default:
+		return fmt.Errorf("VCEK certificate HWID has unsupported size %d", len(certificateHWID))
+	}
+	if !bytes.Equal(reportHWID, certificateHWID) {
+		return fmt.Errorf("report field CHIP_ID %s is not the same as the VCEK certificate's HWID %s",
+			hex.EncodeToString(reportHWID), hex.EncodeToString(certificateHWID))
+	}
+	return nil
 }
 
 // tcbGtError returns an error if wantLower is greater than (in part) wantHigher. It enforces
@@ -769,6 +809,9 @@ func validateMitigationVectors(report *spb.Report, opts *Options) error {
 // SnpAttestation validates fields of the protobuf representation of an attestation report against
 // expectations. Does not check the attestation certificates or signature.
 func SnpAttestation(attestation *spb.Attestation, options *Options) error {
+	if options == nil {
+		return fmt.Errorf("options cannot be nil")
+	}
 	endorsementKeyCert, err := validateKeyKind(attestation)
 	if err != nil {
 		return err
@@ -804,10 +847,12 @@ func SnpAttestation(attestation *spb.Attestation, options *Options) error {
 		return fmt.Errorf("report VMPL %d is not %d", report.GetVmpl(), *options.VMPL)
 	}
 
-	// MaskChipId might be 1 for the host, so only check if the the CHIP_ID is not all zeros.
-	if info.SigningKey == abi.VcekReportSigner && !allZero(report.GetChipId()) && !bytes.Equal(report.GetChipId(), exts.HWID[:]) {
-		return fmt.Errorf("report field CHIP_ID %s is not the same as the VCEK certificate's HWID %s",
-			hex.EncodeToString(report.GetChipId()), hex.EncodeToString(exts.HWID[:]))
+	// MaskChipId might be 1 for the host, so an all-zero report CHIP_ID is
+	// permitted. Otherwise bind the report to the product-specific VCEK HWID.
+	if info.SigningKey == abi.VcekReportSigner {
+		if err := validateVCEKChipID(report.GetChipId(), exts.HWID); err != nil {
+			return err
+		}
 	}
 
 	return certTableOptions(attestation, options.CertTableOptions)

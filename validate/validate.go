@@ -71,6 +71,10 @@ type Options struct {
 	PermitProvisionalFirmware bool
 	// PlatformInfo is the maximum of acceptable PLATFORM_INFO data. Not checked if nil.
 	PlatformInfo *abi.SnpPlatformInfo
+	// PermitPlatformInfoBit6 allows PLATFORM_INFO bit 6 to be set. The current AMD SEV-SNP ABI
+	// reserves this bit, but it is set by some Turin firmware. Callers should enable this only after
+	// authenticating the report as a Turin report. All other reserved bits remain rejected.
+	PermitPlatformInfoBit6 bool
 	// RequireAuthorKey if true, will not validate a report without AUTHOR_KEY_EN equal to 1.
 	// Implies RequireIDBlock is true.
 	RequireAuthorKey bool
@@ -579,9 +583,12 @@ func allZero(buf []byte) bool {
 	return true
 }
 
-func validatePlatformInfo(platformInfo uint64, required *abi.SnpPlatformInfo) error {
+func validatePlatformInfo(platformInfo uint64, required *abi.SnpPlatformInfo, permitBit6 bool) error {
 	if required == nil {
 		return nil
+	}
+	if permitBit6 {
+		platformInfo &^= 1 << 6
 	}
 	reportInfo, err := abi.ParseSnpPlatformInfo(platformInfo)
 	if err != nil {
@@ -794,7 +801,7 @@ func SnpAttestation(attestation *spb.Attestation, options *Options) error {
 		validateVerbatimFields(report, options),
 		validateTcb(report, exts.TCBVersionStruct, options),
 		validateVersion(report, options),
-		validatePlatformInfo(report.GetPlatformInfo(), options.PlatformInfo),
+		validatePlatformInfo(report.GetPlatformInfo(), options.PlatformInfo, options.PermitPlatformInfoBit6),
 		validateKeys(report, options),
 		validateMitigationVectors(report, options)); err != nil {
 		return err

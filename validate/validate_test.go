@@ -484,6 +484,19 @@ func TestValidateSnpAttestation(t *testing.T) {
 	}
 }
 
+func TestValidatePlatformInfoBit6(t *testing.T) {
+	required := &abi.SnpPlatformInfo{}
+	if err := validatePlatformInfo(1<<6, required, false); err == nil || !strings.Contains(err.Error(), "reserved platform info bit 6") {
+		t.Fatalf("validatePlatformInfo() returned %v, want bit 6 error", err)
+	}
+	if err := validatePlatformInfo(1<<6, required, true); err != nil {
+		t.Fatalf("validatePlatformInfo() rejected permitted bit 6: %v", err)
+	}
+	if err := validatePlatformInfo((1<<6)|(1<<8), required, true); err == nil || !strings.Contains(err.Error(), "unrecognized platform info bit") {
+		t.Fatalf("validatePlatformInfo() returned %v, want another reserved-bit error", err)
+	}
+}
+
 func TestCertTableOptions(t *testing.T) {
 	sign0, err := test.DefaultTestOnlyCertChain(test.GetProductName(), time.Now())
 	if err != nil {

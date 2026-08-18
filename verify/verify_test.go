@@ -833,6 +833,37 @@ func TestRealAttestationVerification(t *testing.T) {
 	}
 }
 
+func TestValidateExtensionsTCBFormat(t *testing.T) {
+	turinTCB, err := kds.NewTCBVersionStruct("Turin", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyTCB, err := kds.NewTCBVersionStruct("Milan", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name        string
+		productLine string
+		tcb         kds.TCBVersionStruct
+		wantErr     string
+	}{
+		{name: "Turin", productLine: "Turin", tcb: *turinTCB},
+		{name: "legacy", productLine: "Genoa", tcb: *legacyTCB},
+		{name: "format mismatch", productLine: "Turin", tcb: *legacyTCB, wantErr: "different TCB formats"},
+		{name: "unknown product", productLine: "Venice", tcb: *turinTCB, wantErr: "could not determine TCB format"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateExtensions(&kds.Extensions{TCBVersionStruct: tc.tcb}, abi.VcekReportSigner, tc.productLine)
+			if (err == nil && tc.wantErr != "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("validateExtensions() returned %v, want error containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestKDSCertBackdated(t *testing.T) {
 	if !test.TestUseKDS() {
 		t.Skip()

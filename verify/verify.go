@@ -357,6 +357,13 @@ func validateExtensions(exts *kds.Extensions, key abi.ReportSigner, knownProduct
 		_, err := kds.ParseProductName(exts.ProductName, key)
 		return err
 	}
+	expected, err := kds.NewTCBVersionStruct(knownProductLine, 0)
+	if err != nil {
+		return fmt.Errorf("could not determine TCB format for product %q: %v", knownProductLine, err)
+	}
+	if !expected.SameFormat(exts.TCBVersionStruct) {
+		return fmt.Errorf("product %q and V[CL]EK certificate use different TCB formats", knownProductLine)
+	}
 	return nil
 }
 

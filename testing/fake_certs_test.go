@@ -146,6 +146,9 @@ func TestTurinCertificatesAndFakeKDS(t *testing.T) {
 	if signer.Product.GetName() != spb.SevProduct_SEV_PRODUCT_TURIN {
 		t.Fatalf("fake signer product is %v, want Turin", signer.Product)
 	}
+	if stepping := signer.Product.GetMachineStepping().GetValue(); stepping != 1 {
+		t.Fatalf("fake signer stepping is %d, want Turin-B1 stepping 1", stepping)
+	}
 	extensions, err := kds.VcekCertificateExtensions(signer.Vcek)
 	if err != nil {
 		t.Fatalf("could not parse fake Turin VCEK: %v", err)
@@ -163,6 +166,10 @@ func TestTurinCertificatesAndFakeKDS(t *testing.T) {
 	fakeKDS, err := FakeKDSFromSigner(signer)
 	if err != nil {
 		t.Fatal(err)
+	}
+	_, _, stepping := abi.FmsFromCpuid1Eax(fakeKDS.Certs.GetChipCerts()[0].GetFms())
+	if stepping != 1 {
+		t.Fatalf("fake KDS FMS has stepping %d, want Turin-B1 stepping 1", stepping)
 	}
 	tcb, err := kds.NewTCBVersionStruct("Turin", turinTCB)
 	if err != nil {

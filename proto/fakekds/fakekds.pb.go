@@ -89,7 +89,7 @@ type Certificates_ChipTCBCerts struct {
 	sizeCache     protoimpl.SizeCache
 	unknownFields protoimpl.UnknownFields
 
-	ChipId   []byte            `protobuf:"bytes,1,opt,name=chip_id,json=chipId,proto3" json:"chip_id,omitempty"` // Should be 64 bytes
+	ChipId   []byte            `protobuf:"bytes,1,opt,name=chip_id,json=chipId,proto3" json:"chip_id,omitempty"` // 64 bytes for Family 19h; 8 bytes for Turin and later.
 	TcbCerts map[uint64][]byte `protobuf:"bytes,2,rep,name=tcb_certs,json=tcbCerts,proto3" json:"tcb_certs,omitempty" protobuf_key:"varint,1,opt,name=key,proto3" protobuf_val:"bytes,2,opt,name=value,proto3"`
 	Hostname string            `protobuf:"bytes,3,opt,name=hostname,proto3" json:"hostname,omitempty"`
 	Fms      uint32            `protobuf:"varint,4,opt,name=fms,proto3" json:"fms,omitempty"`

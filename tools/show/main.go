@@ -19,8 +19,8 @@ import (
 	"flag"
 	"os"
 
-	"github.com/tinfoilsh/go-sev-guest/tools/lib/report"
 	"github.com/google/logger"
+	"github.com/tinfoilsh/go-sev-guest/tools/lib/report"
 )
 
 var (

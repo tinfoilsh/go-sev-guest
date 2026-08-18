@@ -38,6 +38,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/logger"
 	"github.com/tinfoilsh/go-sev-guest/abi"
 	sg "github.com/tinfoilsh/go-sev-guest/client"
 	"github.com/tinfoilsh/go-sev-guest/kds"
@@ -46,7 +47,6 @@ import (
 	testclient "github.com/tinfoilsh/go-sev-guest/testing/client"
 	"github.com/tinfoilsh/go-sev-guest/verify/testdata"
 	"github.com/tinfoilsh/go-sev-guest/verify/trust"
-	"github.com/google/logger"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 )
 

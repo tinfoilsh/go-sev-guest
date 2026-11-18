@@ -335,12 +335,24 @@ func TestValidateSnpAttestation(t *testing.T) {
 			name:        "Minimum build checked",
 			attestation: attestation12345,
 			opts: &Options{
-				ReportData:   nonce12345[:],
-				GuestPolicy:  abi.SnpPolicy{Debug: true, SMT: true},
-				PlatformInfo: &abi.SnpPlatformInfo{SMTEnabled: true},
-				MinimumBuild: 3,
+				ReportData:     nonce12345[:],
+				GuestPolicy:    abi.SnpPolicy{Debug: true, SMT: true},
+				PlatformInfo:   &abi.SnpPlatformInfo{SMTEnabled: true},
+				MinimumBuild:   3,
+				MinimumVersion: uint16((1 << 8) | 49),
 			},
-			wantErr: "firmware build number 2 is less than the required minimum 3",
+			wantErr: "firmware version 1.49 build 2 is below the required minimum 1.49 build 3",
+		},
+		{
+			name:        "Minimum build belongs to its API version",
+			attestation: attestation12345,
+			opts: &Options{
+				ReportData:     nonce12345[:],
+				GuestPolicy:    abi.SnpPolicy{Debug: true, SMT: true},
+				PlatformInfo:   &abi.SnpPlatformInfo{SMTEnabled: true},
+				MinimumBuild:   255,
+				MinimumVersion: uint16((1 << 8) | 48),
+			},
 		},
 		{
 			name:        "Minimum version checked",
@@ -351,7 +363,7 @@ func TestValidateSnpAttestation(t *testing.T) {
 				PlatformInfo:   &abi.SnpPlatformInfo{SMTEnabled: true},
 				MinimumVersion: 0xff00,
 			},
-			wantErr: "firmware API version (1.49) is less than the required minimum (255.0)",
+			wantErr: "firmware version 1.49 build 2 is below the required minimum 255.0 build 0",
 		},
 		{
 			name:        "Author key checked",

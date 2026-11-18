@@ -25,20 +25,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-sev-guest/abi"
-	sg "github.com/google/go-sev-guest/client"
-	labi "github.com/google/go-sev-guest/client/linuxabi"
-	"github.com/google/go-sev-guest/kds"
-	test "github.com/google/go-sev-guest/testing"
-	"github.com/google/go-sev-guest/verify"
-	"github.com/google/go-sev-guest/verify/testdata"
 	"github.com/google/uuid"
+	"github.com/tinfoilsh/go-sev-guest/abi"
+	sg "github.com/tinfoilsh/go-sev-guest/client"
+	labi "github.com/tinfoilsh/go-sev-guest/client/linuxabi"
+	"github.com/tinfoilsh/go-sev-guest/kds"
+	test "github.com/tinfoilsh/go-sev-guest/testing"
+	"github.com/tinfoilsh/go-sev-guest/verify"
+	"github.com/tinfoilsh/go-sev-guest/verify/testdata"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	cpb "github.com/google/go-sev-guest/proto/check"
-	spb "github.com/google/go-sev-guest/proto/sevsnp"
+	cpb "github.com/tinfoilsh/go-sev-guest/proto/check"
+	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 )
 
 const (

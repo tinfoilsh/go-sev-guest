@@ -29,9 +29,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/go-sev-guest/abi"
-	"github.com/google/go-sev-guest/kds"
 	"github.com/google/logger"
+	"github.com/tinfoilsh/go-sev-guest/abi"
+	"github.com/tinfoilsh/go-sev-guest/kds"
 	"go.uber.org/multierr"
 )
 

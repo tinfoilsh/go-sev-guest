@@ -19,9 +19,9 @@ import (
 	"flag"
 	"fmt"
 
-	"github.com/google/go-sev-guest/abi"
-	labi "github.com/google/go-sev-guest/client/linuxabi"
-	pb "github.com/google/go-sev-guest/proto/sevsnp"
+	"github.com/tinfoilsh/go-sev-guest/abi"
+	labi "github.com/tinfoilsh/go-sev-guest/client/linuxabi"
+	pb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 )
 
 var sevGuestPath = flag.String("sev_guest_device_path", "default",

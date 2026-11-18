@@ -16,14 +16,14 @@ syntax = "proto3";
 
 package fakekds;
 
-option go_package = "github.com/google/go-sev-guest/proto/fakekds";
+option go_package = "github.com/tinfoilsh/go-sev-guest/proto/fakekds";
 
 // Certificates represents all known certificates for machines at particular
 // TCB values. This is useful to represent a test machine cluster's VCEK
 // certificates that haven't been provisioned with the /dev/sev device.
 message Certificates {
   message ChipTCBCerts {
-    bytes chip_id = 1;  // Should be 64 bytes
+	    bytes chip_id = 1;  // 64 bytes for Family 19h; 8 bytes for Turin and later.
     map<uint64, bytes> tcb_certs = 2;
     string hostname = 3;
     uint32 fms = 4;

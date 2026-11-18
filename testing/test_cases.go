@@ -20,11 +20,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/go-sev-guest/abi"
-	labi "github.com/google/go-sev-guest/client/linuxabi"
-	"github.com/google/go-sev-guest/kds"
-	spb "github.com/google/go-sev-guest/proto/sevsnp"
 	"github.com/google/logger"
+	"github.com/tinfoilsh/go-sev-guest/abi"
+	labi "github.com/tinfoilsh/go-sev-guest/client/linuxabi"
+	"github.com/tinfoilsh/go-sev-guest/kds"
+	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	"google.golang.org/protobuf/encoding/prototext"
 )
 

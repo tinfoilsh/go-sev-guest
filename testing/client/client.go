@@ -18,10 +18,10 @@ package client
 import (
 	"testing"
 
-	"github.com/google/go-sev-guest/abi"
-	"github.com/google/go-sev-guest/client"
-	test "github.com/google/go-sev-guest/testing"
-	"github.com/google/go-sev-guest/verify/trust"
+	"github.com/tinfoilsh/go-sev-guest/abi"
+	"github.com/tinfoilsh/go-sev-guest/client"
+	test "github.com/tinfoilsh/go-sev-guest/testing"
+	"github.com/tinfoilsh/go-sev-guest/verify/trust"
 	"google.golang.org/protobuf/proto"
 )
 

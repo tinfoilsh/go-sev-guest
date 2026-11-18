@@ -23,11 +23,11 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/google/go-sev-guest/abi"
-	"github.com/google/go-sev-guest/client"
-	pb "github.com/google/go-sev-guest/proto/sevsnp"
-	"github.com/google/go-sev-guest/tools/lib/cmdline"
 	"github.com/google/logger"
+	"github.com/tinfoilsh/go-sev-guest/abi"
+	"github.com/tinfoilsh/go-sev-guest/client"
+	pb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
+	"github.com/tinfoilsh/go-sev-guest/tools/lib/cmdline"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
 )

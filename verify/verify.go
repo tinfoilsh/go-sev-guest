@@ -26,12 +26,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/go-sev-guest/abi"
-	"github.com/google/go-sev-guest/kds"
-	cpb "github.com/google/go-sev-guest/proto/check"
-	spb "github.com/google/go-sev-guest/proto/sevsnp"
-	"github.com/google/go-sev-guest/verify/trust"
 	"github.com/google/logger"
+	"github.com/tinfoilsh/go-sev-guest/abi"
+	"github.com/tinfoilsh/go-sev-guest/kds"
+	cpb "github.com/tinfoilsh/go-sev-guest/proto/check"
+	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
+	"github.com/tinfoilsh/go-sev-guest/verify/trust"
 	"go.uber.org/multierr"
 )
 

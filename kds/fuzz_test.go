@@ -20,9 +20,9 @@ import (
 	"encoding/pem"
 	"testing"
 
-	"github.com/google/go-sev-guest/kds"
-	"github.com/google/go-sev-guest/verify/testdata"
-	"github.com/google/go-sev-guest/verify/trust"
+	"github.com/tinfoilsh/go-sev-guest/kds"
+	"github.com/tinfoilsh/go-sev-guest/verify/testdata"
+	"github.com/tinfoilsh/go-sev-guest/verify/trust"
 )
 
 // FuzzParseProductCertChain mutates the body of a KDS cert_chain response: an ASK and an ARK

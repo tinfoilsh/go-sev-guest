@@ -23,9 +23,9 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/google/go-sev-guest/abi"
-	labi "github.com/google/go-sev-guest/client/linuxabi"
-	spb "github.com/google/go-sev-guest/proto/sevsnp"
+	"github.com/tinfoilsh/go-sev-guest/abi"
+	labi "github.com/tinfoilsh/go-sev-guest/client/linuxabi"
+	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	"golang.org/x/sys/unix"
 )
 

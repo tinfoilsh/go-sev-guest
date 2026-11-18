@@ -25,9 +25,9 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-	spb "github.com/google/go-sev-guest/proto/sevsnp"
-	"github.com/google/go-sev-guest/verify/testdata"
 	"github.com/google/uuid"
+	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
+	"github.com/tinfoilsh/go-sev-guest/verify/testdata"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/wrapperspb"

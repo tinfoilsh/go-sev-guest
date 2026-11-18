@@ -671,3 +671,18 @@ func FuzzRawSnpAttestation(f *testing.F) {
 		_ = RawSnpAttestation(rawReport, rawCertTable, opts)
 	})
 }
+
+func TestValidateIOMMUWriteSafe(t *testing.T) {
+	if err := validatePlatformInfo(1<<6, &abi.SnpPlatformInfo{}); err != nil {
+		t.Fatalf("validatePlatformInfo() rejected IOMMU_WRITE_SAFE: %v", err)
+	}
+	if err := validatePlatformInfo(0, &abi.SnpPlatformInfo{IOMMUWriteSafe: true}); err == nil || !strings.Contains(err.Error(), "IOMMU write-safe") {
+		t.Fatalf("validatePlatformInfo() returned %v, want missing mitigation error", err)
+	}
+	if err := validatePlatformInfo(1<<6, &abi.SnpPlatformInfo{IOMMUWriteSafe: true}); err != nil {
+		t.Fatalf("validatePlatformInfo() rejected required IOMMU_WRITE_SAFE: %v", err)
+	}
+	if err := validatePlatformInfo((1<<6)|(1<<8), &abi.SnpPlatformInfo{}); err == nil || !strings.Contains(err.Error(), "unrecognized platform info bit") {
+		t.Fatalf("validatePlatformInfo() returned %v, want another reserved-bit error", err)
+	}
+}

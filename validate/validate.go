@@ -572,6 +572,9 @@ func validatePlatformInfo(platformInfo uint64, required *abi.SnpPlatformInfo) er
 	if !reportInfo.AliasCheckComplete && required.AliasCheckComplete {
 		return errors.New("required memory alias check hasn't been completed")
 	}
+	if !reportInfo.IOMMUWriteSafe && required.IOMMUWriteSafe {
+		return errors.New("required IOMMU write-safe hardware mitigation is not present")
+	}
 	if reportInfo.TIOEnabled && !required.TIOEnabled {
 		return errors.New("unauthorized feature SEV-TIO enabled")
 	}

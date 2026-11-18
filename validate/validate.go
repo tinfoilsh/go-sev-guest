@@ -498,41 +498,34 @@ func validateTcb(report *spb.Report, certTcb kds.TCBVersion, options *Options) e
 	//    that we think it reasonable for the reported TCB to be the lowest of the bunch.
 }
 
+// firmwareVersion orders SEV firmware as AMD numbers it: API major, then
+// minor, then the build within that API version. Each part is one byte.
+func firmwareVersion(major, minor, build uint32) uint32 {
+	return major<<16 | minor<<8 | build
+}
+
 func validateVersion(report *spb.Report, options *Options) error {
-	if options.MinimumBuild > uint8(report.GetCurrentBuild()) {
-		return fmt.Errorf("firmware build number %d is less than the required minimum %d",
-			report.GetCurrentBuild(), options.MinimumBuild)
+	minimum := firmwareVersion(uint32(options.MinimumVersion>>8), uint32(options.MinimumVersion&0xff), uint32(options.MinimumBuild))
+	current := firmwareVersion(report.GetCurrentMajor(), report.GetCurrentMinor(), report.GetCurrentBuild())
+	if current < minimum {
+		return fmt.Errorf("firmware version %d.%d build %d is below the required minimum %d.%d build %d",
+			report.GetCurrentMajor(), report.GetCurrentMinor(), report.GetCurrentBuild(),
+			options.MinimumVersion>>8, options.MinimumVersion&0xff, options.MinimumBuild)
 	}
-	if options.MinimumVersion > (uint16(report.GetCurrentMajor()<<8) | uint16(report.GetCurrentMinor())) {
-		return fmt.Errorf("firmware API version (%d.%d) is less than the required minimum (%d.%d)",
-			report.GetCurrentMajor(), report.GetCurrentMinor(),
-			options.MinimumVersion>>8, options.MinimumVersion&0xff)
-	}
-	buildCmp := int(report.GetCommittedBuild()) - int(report.GetCurrentBuild())
-	versionCmp := compareByteVersions(uint8(report.GetCommittedMajor()),
-		uint8(report.GetCommittedMinor()),
-		uint8(report.GetCurrentMajor()),
-		uint8(report.GetCurrentMinor()))
 	if !options.PermitProvisionalFirmware {
-		if buildCmp != 0 {
+		if report.GetCommittedBuild() != report.GetCurrentBuild() {
 			return fmt.Errorf("committed build number %d does not match the current build number %d",
 				report.GetCommittedBuild(), report.GetCurrentBuild())
 		}
-		if versionCmp != 0 {
+		if report.GetCommittedMajor() != report.GetCurrentMajor() || report.GetCommittedMinor() != report.GetCurrentMinor() {
 			return fmt.Errorf("committed API version (%d.%d) does not match the current API version (%d.%d)",
 				report.GetCommittedMajor(), report.GetCommittedMinor(),
 				report.GetCurrentMajor(), report.GetCurrentMinor())
 		}
-	} else {
-		if buildCmp > 0 {
-			return fmt.Errorf("committed build number %d is greater than the current build number %d",
-				report.GetCommittedBuild(), report.GetCurrentBuild())
-		}
-		if versionCmp > 0 {
-			return fmt.Errorf("committed API version (%d.%d) is greater than the current API version (%d.%d)",
-				report.GetCommittedMajor(), report.GetCommittedMinor(),
-				report.GetCurrentMinor(), report.GetCurrentMinor())
-		}
+	} else if firmwareVersion(report.GetCommittedMajor(), report.GetCommittedMinor(), report.GetCommittedBuild()) > current {
+		return fmt.Errorf("committed firmware version %d.%d build %d is later than the current version %d.%d build %d",
+			report.GetCommittedMajor(), report.GetCommittedMinor(), report.GetCommittedBuild(),
+			report.GetCurrentMajor(), report.GetCurrentMinor(), report.GetCurrentBuild())
 	}
 	return nil
 }

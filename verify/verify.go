@@ -359,6 +359,13 @@ func validateExtensions(exts *kds.Extensions, key abi.ReportSigner, knownProduct
 		_, err := kds.ParseProductName(exts.ProductName, key)
 		return err
 	}
+	expected, err := kds.StructVersionForProductLine(knownProductLine)
+	if err != nil {
+		return fmt.Errorf("could not determine TCB format for product %q: %v", knownProductLine, err)
+	}
+	if exts.TCBVersion == nil || exts.TCBVersion.StructVersion() != expected {
+		return fmt.Errorf("product %q and V[CL]EK certificate use different TCB formats", knownProductLine)
+	}
 	return nil
 }
 
@@ -821,7 +828,13 @@ func fillInAttestation(ctx context.Context, attestation *spb.Attestation, option
 			if getter == nil {
 				return fmt.Errorf("fetch VCEK certificate: %w", ErrNoGetter)
 			}
-			vcekURL := kds.VCEKCertURL(productLine, report.GetChipId(), kds.DecomposeTCBVersionV0(report.GetReportedTcb()))
+			reportedTcb, err := kds.DecomposeProductTCB(productLine, report.GetReportedTcb())
+			if err != nil {
+				return &trust.AttestationRecreationErr{
+					Msg: fmt.Sprintf("could not query VCEK certificate URL: %v", err),
+				}
+			}
+			vcekURL := kds.VCEKCertURL(productLine, report.GetChipId(), reportedTcb)
 			vcek, err := trust.GetWith(ctx, getter, vcekURL)
 			if err != nil {
 				return &trust.AttestationRecreationErr{

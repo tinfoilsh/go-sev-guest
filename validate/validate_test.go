@@ -698,3 +698,63 @@ func TestValidateIOMMUWriteSafe(t *testing.T) {
 		t.Fatalf("validatePlatformInfo() returned %v, want another reserved-bit error", err)
 	}
 }
+
+func TestValidateVCEKChipID(t *testing.T) {
+	chipID := make([]byte, abi.ChipIDSize)
+	for i := range chipID {
+		chipID[i] = byte(i + 1)
+	}
+	turinChipID := make([]byte, abi.ChipIDSize)
+	copy(turinChipID, chipID[:abi.TurinSiliconIDSize])
+	for _, tc := range []struct {
+		name         string
+		chipID, hwid []byte
+		wantErr      string
+	}{
+		{name: "whole CHIP_ID", chipID: chipID, hwid: chipID},
+		{name: "Turin silicon ID", chipID: turinChipID, hwid: chipID[:abi.TurinSiliconIDSize]},
+		{name: "masked CHIP_ID", chipID: make([]byte, abi.ChipIDSize), hwid: chipID},
+		{name: "another chip", chipID: chipID, hwid: make([]byte, abi.ChipIDSize), wantErr: "is not the same as"},
+		{name: "another Turin chip", chipID: turinChipID, hwid: make([]byte, abi.TurinSiliconIDSize), wantErr: "is not the same as"},
+		{name: "unsupported HWID size", chipID: chipID, hwid: chipID[:16], wantErr: "unsupported size 16"},
+		{name: "short CHIP_ID", chipID: chipID[:8], hwid: chipID[:8], wantErr: "CHIP_ID has size 8"},
+	} {
+		err := validateVCEKChipID(tc.chipID, tc.hwid)
+		if (err == nil) != (tc.wantErr == "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+			t.Errorf("%s: validateVCEKChipID() = %v, want error containing %q", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
+func TestReportTcbsFollowTheProductLayout(t *testing.T) {
+	const turinFms, genoaFms = 0x00b00f21, 0x00a10f11
+	turinTcb := kds.TCBVersionV1{FmcSpl: 1, BlSpl: 3, TeeSpl: 2, SnpSpl: 5, UcodeSpl: 0x61}
+	genoaTcb := kds.TCBVersionV0{BlSpl: 10, SnpSpl: 27, UcodeSpl: 88}
+	report := func(version, fms uint32, tcb uint64) *spb.Report {
+		return &spb.Report{Version: version, Cpuid1EaxFms: fms, ReportedTcb: tcb, CurrentTcb: tcb, CommittedTcb: tcb, LaunchTcb: tcb}
+	}
+	for _, tc := range []struct {
+		name    string
+		report  *spb.Report
+		cert    kds.TCBVersion
+		wantErr string
+	}{
+		{name: "Turin", report: report(5, turinFms, turinTcb.Uint64()), cert: turinTcb},
+		{name: "Genoa", report: report(3, genoaFms, genoaTcb.Uint64()), cert: genoaTcb},
+		{name: "legacy report", report: report(2, 0, genoaTcb.Uint64()), cert: genoaTcb},
+		{name: "Turin report with a legacy certificate", report: report(5, turinFms, turinTcb.Uint64()), cert: genoaTcb, wantErr: "different TCB formats"},
+		{name: "Genoa report with a Turin certificate", report: report(3, genoaFms, genoaTcb.Uint64()), cert: turinTcb, wantErr: "different TCB formats"},
+		{name: "legacy report with a Turin certificate", report: report(2, 0, genoaTcb.Uint64()), cert: turinTcb, wantErr: "non-legacy TCB format"},
+		{name: "Turin reserved bits", report: report(5, turinFms, turinTcb.Uint64()|1<<40), cert: turinTcb, wantErr: "non-zero reserved bits in Turin TCB"},
+		{name: "unknown product", report: report(5, 0x00c00f00, turinTcb.Uint64()), cert: turinTcb, wantErr: "could not determine report TCB format"},
+	} {
+		got, err := getReportTcbs(tc.report, tc.cert)
+		if (err == nil) != (tc.wantErr == "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+			t.Errorf("%s: getReportTcbs() = %v, want error containing %q", tc.name, err, tc.wantErr)
+			continue
+		}
+		if err == nil && (got.reported.tcb.StructVersion() != tc.cert.StructVersion() || got.reported.tcb.Uint64() != tc.report.GetReportedTcb()) {
+			t.Errorf("%s: reported TCB = %v, want the certificate's layout and the report's value", tc.name, got.reported.tcb)
+		}
+	}
+}

@@ -17,6 +17,7 @@ package testing
 import (
 	"bytes"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"testing"
 	"time"
 
@@ -119,5 +120,46 @@ func TestCertificatesExtras(t *testing.T) {
 	}
 	if !hasXtra {
 		t.Errorf("fake certs missing extra cert")
+	}
+}
+
+func TestTurinCertificateExtensions(t *testing.T) {
+	tcb := kds.TCBVersionV1{FmcSpl: 1, BlSpl: 3, TeeSpl: 2, SnpSpl: 5, UcodeSpl: 0x61}
+	b := &AmdSignerBuilder{ProductName: "Turin-B1", TCB: tcb}
+	for i := range b.HWID[:abi.TurinSiliconIDSize] {
+		b.HWID[i] = byte(i + 1)
+	}
+	signer, err := b.TestOnlyCertChain()
+	if err != nil {
+		t.Fatal(err)
+	}
+	exts, err := kds.VcekCertificateExtensions(signer.Vcek)
+	if err != nil {
+		t.Fatalf("VcekCertificateExtensions() = %v, want a Turin certificate to parse", err)
+	}
+	if exts.StructVersion != 1 || exts.TCBVersion != kds.TCBVersion(tcb) {
+		t.Errorf("extensions = version %d, TCB %v; want version 1, TCB %v", exts.StructVersion, exts.TCBVersion, tcb)
+	}
+	if !bytes.Equal(exts.HWID, b.HWID[:abi.TurinSiliconIDSize]) {
+		t.Errorf("HWID = %x, want the 8-byte silicon ID %x", exts.HWID, b.HWID[:abi.TurinSiliconIDSize])
+	}
+
+	// A certificate must use the members of its own struct version.
+	for name, extensions := range map[string][]pkix.Extension{
+		"version 0 with FmcSpl": append(CustomExtensionsV0(kds.TCBVersionV0{}, make([]byte, abi.ChipIDSize), "", "Genoa-B1"),
+			pkix.Extension{Id: kds.OidFmcSpl, Value: []byte{2, 1, 0}}),
+		"version 1 with Spl4": append(CustomExtensionsV1(tcb, b.HWID[:], "", "Turin-B1"),
+			pkix.Extension{Id: kds.OidSpl4, Value: []byte{2, 1, 0}}),
+		"version 1 with a reserved level set": CustomExtensionsV1(kds.TCBVersionV1{Spl5: 1}, b.HWID[:], "", "Turin-B1"),
+		"version 1 with a level above 127":    CustomExtensionsV1(kds.TCBVersionV1{SnpSpl: 128}, b.HWID[:], "", "Turin-B1"),
+	} {
+		bad := &AmdSignerBuilder{ProductName: "Turin-B1", TCB: tcb, VcekCustom: CertOverride{Extensions: extensions}}
+		signer, err := bad.TestOnlyCertChain()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if _, err := kds.VcekCertificateExtensions(signer.Vcek); err == nil {
+			t.Errorf("%s: VcekCertificateExtensions() accepted the certificate", name)
+		}
 	}
 }

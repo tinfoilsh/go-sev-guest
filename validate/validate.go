@@ -378,29 +378,86 @@ type reportTcbDescriptions struct {
 	cert partDescription
 }
 
-func getReportTcbs(report *spb.Report, certTcb kds.TCBVersion) *reportTcbDescriptions {
-	return &reportTcbDescriptions{
-		reported: partDescription{
-			tcb:  kds.DecomposeTCBVersionV0(report.GetReportedTcb()),
-			desc: "report's REPORTED_TCB",
-		},
-		current: partDescription{
-			tcb:  kds.DecomposeTCBVersionV0(report.GetCurrentTcb()),
-			desc: "report's CURRENT_TCB",
-		},
-		committed: partDescription{
-			tcb:  kds.DecomposeTCBVersionV0(report.GetCommittedTcb()),
-			desc: "report's COMMITTED_TCB",
-		},
-		launch: partDescription{
-			tcb:  kds.DecomposeTCBVersionV0(report.GetLaunchTcb()),
-			desc: "report's LAUNCH_TCB",
-		},
-		cert: partDescription{
-			tcb:  certTcb,
-			desc: "TCB of the V[CL]EK certificate",
-		},
+// turinReservedTCBMask covers bits 55:32 of a Turin TCB, which are reserved.
+const turinReservedTCBMask = 0x00ffffff00000000
+
+// reportTcbStructVersion returns the TCB layout of the report's TCB fields, which must be the
+// layout of the certificate's TCB.
+func reportTcbStructVersion(report *spb.Report, certTcb kds.TCBVersion) (uint8, error) {
+	if report.GetVersion() < abi.ReportVersion3 {
+		// Reports before version 3 do not carry CPUID product identity and
+		// predate the Turin TCB layout. Do not let a version-1 certificate
+		// reinterpret their TCB fields.
+		if certTcb.StructVersion() != 0 {
+			return 0, fmt.Errorf("report version %d cannot be used with a non-legacy TCB format", report.GetVersion())
+		}
+		return 0, nil
 	}
+	productLine := kds.ProductLineFromFms(report.GetCpuid1EaxFms())
+	version, err := kds.StructVersionForProductLine(productLine)
+	if err != nil {
+		return 0, fmt.Errorf("could not determine report TCB format: %v", err)
+	}
+	if version != certTcb.StructVersion() {
+		return 0, fmt.Errorf("report product %q and V[CL]EK certificate use different TCB formats", productLine)
+	}
+	return version, nil
+}
+
+func getReportTcbs(report *spb.Report, certTcb kds.TCBVersion) (*reportTcbDescriptions, error) {
+	if certTcb == nil {
+		return nil, errors.New("V[CL]EK certificate has no TCB")
+	}
+	version, err := reportTcbStructVersion(report, certTcb)
+	if err != nil {
+		return nil, err
+	}
+	decompose := func(raw uint64) (kds.TCBVersion, error) {
+		// Rejecting non-zero reserved bits keeps them from disappearing
+		// when the TCB is compared with the certificate's.
+		if version == 1 && raw&turinReservedTCBMask != 0 {
+			return nil, fmt.Errorf("non-zero reserved bits in Turin TCB: 0x%x", raw&turinReservedTCBMask)
+		}
+		return kds.DecomposeTCBVersion(version, raw)
+	}
+	reported, reportedErr := decompose(report.GetReportedTcb())
+	current, currentErr := decompose(report.GetCurrentTcb())
+	committed, committedErr := decompose(report.GetCommittedTcb())
+	launch, launchErr := decompose(report.GetLaunchTcb())
+	if err := multierr.Combine(reportedErr, currentErr, committedErr, launchErr); err != nil {
+		return nil, err
+	}
+	return &reportTcbDescriptions{
+		reported:  partDescription{tcb: reported, desc: "report's REPORTED_TCB"},
+		current:   partDescription{tcb: current, desc: "report's CURRENT_TCB"},
+		committed: partDescription{tcb: committed, desc: "report's COMMITTED_TCB"},
+		launch:    partDescription{tcb: launch, desc: "report's LAUNCH_TCB"},
+		cert:      partDescription{tcb: certTcb, desc: "TCB of the V[CL]EK certificate"},
+	}, nil
+}
+
+func validateVCEKChipID(reportChipID, certificateHWID []byte) error {
+	if len(reportChipID) != abi.ChipIDSize {
+		return fmt.Errorf("report field CHIP_ID has size %d, want %d", len(reportChipID), abi.ChipIDSize)
+	}
+	if allZero(reportChipID) {
+		return nil
+	}
+
+	var reportHWID []byte
+	switch len(certificateHWID) {
+	case abi.ChipIDSize:
+		reportHWID = reportChipID
+	case abi.TurinSiliconIDSize: // Turin uses an 8-byte silicon ID as the HWID of VCEK certificates.
+		reportHWID = reportChipID[:abi.TurinSiliconIDSize]
+	default:
+		return fmt.Errorf("VCEK certificate HWID has unsupported size %d", len(certificateHWID))
+	}
+	if !bytes.Equal(reportHWID, certificateHWID) {
+		return fmt.Errorf("report field CHIP_ID %s is not the same as the VCEK certificate's HWID %s",
+			hex.EncodeToString(reportHWID), hex.EncodeToString(certificateHWID))
+	}
+	return nil
 }
 
 // policyTcbDescriptions is a collection of all TCB kinds that the validation policy specifies.
@@ -452,7 +509,10 @@ func tcbGtError(wantLower, wantHigher partDescription) error {
 // obey expected relationships with respect to the given validation policy, or with respect to
 // internal consistency checks.
 func validateTcb(report *spb.Report, certTcb kds.TCBVersion, options *Options) error {
-	reportTcbs := getReportTcbs(report, certTcb)
+	reportTcbs, err := getReportTcbs(report, certTcb)
+	if err != nil {
+		return err
+	}
 	policyTcbs := getPolicyTcbs(options)
 
 	var provisionalErr error
@@ -767,10 +827,12 @@ func SnpAttestation(attestation *spb.Attestation, options *Options) error {
 		return fmt.Errorf("report VMPL %d is not %d", report.GetVmpl(), *options.VMPL)
 	}
 
-	// MaskChipId might be 1 for the host, so only check if the the CHIP_ID is not all zeros.
-	if info.SigningKey == abi.VcekReportSigner && !allZero(report.GetChipId()) && !bytes.Equal(report.GetChipId(), exts.HWID[:]) {
-		return fmt.Errorf("report field CHIP_ID %s is not the same as the VCEK certificate's HWID %s",
-			hex.EncodeToString(report.GetChipId()), hex.EncodeToString(exts.HWID[:]))
+	// MaskChipId might be 1 for the host, so an all-zero report CHIP_ID is
+	// permitted. Otherwise bind the report to the product-specific VCEK HWID.
+	if info.SigningKey == abi.VcekReportSigner {
+		if err := validateVCEKChipID(report.GetChipId(), exts.HWID); err != nil {
+			return err
+		}
 	}
 
 	return certTableOptions(attestation, options.CertTableOptions)

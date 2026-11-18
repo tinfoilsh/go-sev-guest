@@ -17,12 +17,14 @@ package trust_test
 import (
 	"bytes"
 	"context"
+	"encoding/pem"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/tinfoilsh/go-sev-guest/abi"
 	test "github.com/tinfoilsh/go-sev-guest/testing"
+	"github.com/tinfoilsh/go-sev-guest/verify/testdata"
 	"github.com/tinfoilsh/go-sev-guest/verify/trust"
 )
 
@@ -246,6 +248,22 @@ func TestGetWith(t *testing.T) {
 
 }
 
+func TestGetWithNilGetter(t *testing.T) {
+	if _, err := trust.GetWith(context.Background(), nil, "https://fetch.me"); err == nil {
+		t.Errorf("GetWith(_, nil, _) = _, nil, want error")
+	}
+}
+
+func TestRetryHTTPSGetterNilGetter(t *testing.T) {
+	r := &trust.RetryHTTPSGetter{MaxRetryDelay: time.Millisecond}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if _, err := r.GetContext(ctx, "https://fetch.me"); err == nil || errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("GetContext() = _, %v, want an error without retrying until the deadline", err)
+	}
+}
+
 // Ensure that the HTTPSGetters implement the expected interfaces.
 var (
 	_ = trust.HTTPSGetter(&trust.SimpleHTTPSGetter{})
@@ -253,3 +271,20 @@ var (
 	_ = trust.ContextHTTPSGetter(&trust.SimpleHTTPSGetter{})
 	_ = trust.ContextHTTPSGetter(&trust.RetryHTTPSGetter{})
 )
+
+func FuzzParseCert(f *testing.F) {
+	vcekPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: testdata.VcekBytes,
+	})
+	f.Add([]byte{})
+	f.Add(testdata.VcekBytes)
+	f.Add(vcekPEM)
+	f.Add(append(append([]byte{}, vcekPEM...), vcekPEM...))
+	f.Add(append(append([]byte{}, vcekPEM...), "trailing"...))
+	f.Add([]byte("-----BEGIN CERTIFICATE-----\nnot base64\n-----END CERTIFICATE-----\n"))
+
+	f.Fuzz(func(_ *testing.T, data []byte) {
+		_, _ = trust.ParseCert(data)
+	})
+}

@@ -1,4 +1,4 @@
-// Copyright 2024-2025 Google LLC
+// Copyright 2024 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -121,36 +121,17 @@ func asBin(report *spb.Attestation) ([]byte, error) {
 	return append(r, certs...), nil
 }
 
-func tcbBreakdown(productLine string, tcb uint64) (string, error) {
-	tcbVersionStruct, err := kds.NewTCBVersionStruct(productLine, tcb)
-	if err != nil {
-		return "", err
-	}
-
-	parts, err := kds.DecomposeTCBVersionStruct(tcbVersionStruct)
-	if err != nil {
-		return "", err
-	}
-
-	return parts.String(), nil
+func tcbBreakdown(tcb uint64) string {
+	v0 := kds.DecomposeTCBVersionV0(tcb)
+	return fmt.Sprintf("0x%x:{ucode: %d, snp: %d, tee: %d, bl: %d}", tcb, v0.UcodeSpl, v0.SnpSpl,
+		v0.TeeSpl, v0.BlSpl)
 }
 
 func tcbText(report *spb.Attestation) ([]byte, error) {
-	productLine := "Milan"
-	if report.GetReport().GetVersion() >= abi.ReportVersion3 {
-		productLine = kds.ProductLineFromFms(report.GetReport().GetCpuid1EaxFms())
-	}
-
-	currentTcb, currentTcbErr := tcbBreakdown(productLine, report.Report.GetCurrentTcb())
-	committedTcb, committedTcbErr := tcbBreakdown(productLine, report.Report.GetCommittedTcb())
-	launchTcb, launchTcbErr := tcbBreakdown(productLine, report.Report.GetLaunchTcb())
-	err := multierr.Combine(currentTcbErr, committedTcbErr, launchTcbErr)
-	if err != nil {
-		return nil, err
-	}
-
 	return []byte(fmt.Sprintf("current_tcb=%s\ncommitted_tcb=%s\nlaunch_tcb=%s\n",
-		currentTcb, committedTcb, launchTcb)), nil
+		tcbBreakdown(report.Report.GetCurrentTcb()),
+		tcbBreakdown(report.Report.GetCommittedTcb()),
+		tcbBreakdown(report.Report.GetLaunchTcb()))), nil
 }
 
 // Transform returns the attestation in the outform marshalled format.

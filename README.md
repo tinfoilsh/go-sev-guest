@@ -94,7 +94,8 @@ This type contains three fields:
 
 *   `CheckRevocations bool`: if true, then `SnpAttestation` will download the
     certificate revocation list (CRL) and check for revocations.
-*   `Getter HTTPSGetter`: must be non-`nil` if `CheckRevocations` is true.
+*   `Getter HTTPSGetter`: fetches certificates and CRLs over HTTPS. If `nil`,
+    operations that require the network return `ErrNoGetter`.
 *   `TrustedRoots map[string][]*AMDRootCerts`: if `nil`, uses the library's embedded certificates.
      Maps a product name to all allowed root certifications for that product (e.g., Milan).
 
@@ -167,8 +168,12 @@ The fields that provide a maximum acceptable value are:
 *   `PermitProvisionalFirmware`: if false, the minimum TCB and API values are
     equal to the reported values. If true, the maximum TCB and API values are
     the reported values.
-*   `PlatformInfo`: each true field of `PlatformInfo` is permission for the
-    attestation report's `PLATFORM_INFO` corresponding bit to be set.
+*   `PlatformInfo`: mixed direction, so it is only partly a maximum. For
+    `SMTEnabled`, `TSMEEnabled` and `TIOEnabled`, each true field is permission for the
+    attestation report's `PLATFORM_INFO` corresponding bit to be set. For `ECCEnabled`,
+    `RAPLDisabled`, `CiphertextHidingDRAMEnabled` and `AliasCheckComplete`, a true field
+    is a requirement that the corresponding bit be set, and a false field imposes no
+    constraint rather than forbidding it.
 
 Finally, the fields for trusting IDBlock signers. Both ID keys and Author keys
 have x.509 certificate and SEV-SNP hash format inputs for usability. The x.509

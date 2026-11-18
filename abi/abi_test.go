@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"math/rand"
 	"runtime"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/uuid"
 	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
+	"github.com/tinfoilsh/go-sev-guest/verify/testdata"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/wrapperspb"
@@ -390,6 +392,41 @@ func TestCertTableProto(t *testing.T) {
 	}
 }
 
+func TestCertTableUnmarshalUint32Overflow(t *testing.T) {
+	// A cert table is a header of (GUID, offset, length) records followed by certificate bytes.
+	// Each case sets one record's offset and length so that their 32-bit sum wraps to less than
+	// the 100-byte table. The old uint32 bounds check accepted these and the slice that followed
+	// panicked.
+	for _, tc := range []struct {
+		name   string
+		offset uint32
+		length uint32
+	}{
+		{name: "large offset", offset: 0xffffff00, length: 0x150},                           // sum wraps to 80
+		{name: "large length", offset: 2 * CertTableEntrySize, length: math.MaxUint32 - 10}, // sum wraps to 37
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			headers := make([]CertTableHeaderEntry, 2)
+			headers[0].GUID = uuid.MustParse(extraGUID)
+			headers[0].Offset = tc.offset
+			headers[0].Length = tc.length
+
+			table := make([]byte, 100)
+			if err := headers[0].Write(table[:CertTableEntrySize]); err != nil {
+				t.Fatalf("could not write header 0: %v", err)
+			}
+			if err := headers[1].Write(table[CertTableEntrySize : 2*CertTableEntrySize]); err != nil {
+				t.Fatalf("could not write header 1: %v", err)
+			}
+
+			c := new(CertTable)
+			if err := c.Unmarshal(table); err == nil {
+				t.Errorf("c.Unmarshal() succeeded unexpectedly, want error")
+			}
+		})
+	}
+}
+
 func TestSevProduct(t *testing.T) {
 	oldCpuid := cpuid
 	defer func() { cpuid = oldCpuid }()
@@ -437,6 +474,44 @@ func TestSevProduct(t *testing.T) {
 			want: &spb.SevProduct{
 				Name:            spb.SevProduct_SEV_PRODUCT_TURIN,
 				MachineStepping: &wrapperspb.UInt32Value{Value: 1},
+			},
+		},
+		{
+			eax: 0x00b10f20,
+			want: &spb.SevProduct{
+				Name:            spb.SevProduct_SEV_PRODUCT_TURIN,
+				MachineStepping: &wrapperspb.UInt32Value{Value: 0},
+			},
+		},
+		{
+			eax: 0x00b10f21,
+			want: &spb.SevProduct{
+				Name:            spb.SevProduct_SEV_PRODUCT_TURIN,
+				MachineStepping: &wrapperspb.UInt32Value{Value: 1},
+			},
+		},
+		{
+			// Turin with base model 0 (0x00b00f00)
+			eax: 0x00b00f00,
+			want: &spb.SevProduct{
+				Name:            spb.SevProduct_SEV_PRODUCT_TURIN,
+				MachineStepping: &wrapperspb.UInt32Value{Value: 0},
+			},
+		},
+		{
+			// Turin Dense / Zen 5c with base model 1 (0x00b10f10)
+			eax: 0x00b10f10,
+			want: &spb.SevProduct{
+				Name:            spb.SevProduct_SEV_PRODUCT_TURIN,
+				MachineStepping: &wrapperspb.UInt32Value{Value: 0},
+			},
+		},
+		{
+			// Zen 5 Family 1Ah with Extended Model 2 (unmapped) -> Unknown
+			eax: 0x00b20f00,
+			want: &spb.SevProduct{
+				Name:            spb.SevProduct_SEV_PRODUCT_UNKNOWN,
+				MachineStepping: &wrapperspb.UInt32Value{Value: 0},
 			},
 		},
 	}
@@ -532,4 +607,57 @@ func TestExtendedPlatformCertTable(t *testing.T) {
 			}
 		})
 	}
+}
+
+// FuzzCertTableRoundTrip mutates raw certificate table bytes. It is a property test: for each
+// table t that Unmarshal accepts, Unmarshal(Marshal(t)) returns the entries of t.
+func FuzzCertTableRoundTrip(f *testing.F) {
+	f.Add([]byte{})
+	// Unmarshal rejects 16 zero bytes because it is shorter than one 24-byte entry.
+	// It accepts 24 zero bytes as one all-zero terminator entry, which makes an empty table.
+	f.Add(make([]byte, 16))
+	f.Add(make([]byte, CertTableEntrySize))
+	f.Add(testRawCertTable(f).table)
+	f.Add(testRawCertTableNoVcek(f).table)
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		table := new(CertTable)
+		if err := table.Unmarshal(data); err != nil {
+			return
+		}
+		roundTrip := new(CertTable)
+		if err := roundTrip.Unmarshal(table.Marshal()); err != nil {
+			t.Fatalf("Unmarshal(Marshal()) failed on a table that parsed: %v", err)
+		}
+		if diff := cmp.Diff(table.Entries, roundTrip.Entries); diff != "" {
+			t.Fatalf("round-trip entries mismatch (-want +got):\n%s", diff)
+		}
+	})
+}
+
+// FuzzReportRoundTrip mutates raw attestation report bytes. It is a property test: for each
+// report r that ReportToProto accepts, ReportToProto(ReportToAbiBytes(r)) returns r.
+func FuzzReportRoundTrip(f *testing.F) {
+	f.Add(testdata.AttestationBytes)
+	f.Add(make([]byte, ReportSize))
+	f.Add(make([]byte, ReportSize-1))
+	f.Add([]byte{})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		report, err := ReportToProto(data)
+		if err != nil {
+			return
+		}
+		raw, err := ReportToAbiBytes(report)
+		if err != nil {
+			t.Fatalf("ReportToAbiBytes failed on a report that parsed: %v", err)
+		}
+		again, err := ReportToProto(raw)
+		if err != nil {
+			t.Fatalf("ReportToProto(ReportToAbiBytes()) failed: %v", err)
+		}
+		if diff := cmp.Diff(report, again, protocmp.Transform()); diff != "" {
+			t.Fatalf("round-trip report mismatch (-want +got):\n%s", diff)
+		}
+	})
 }

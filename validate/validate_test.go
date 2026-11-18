@@ -1,4 +1,4 @@
-// Copyright 2022-2025 Google LLC
+// Copyright 2022 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -25,15 +25,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/tinfoilsh/go-sev-guest/abi"
 	sg "github.com/tinfoilsh/go-sev-guest/client"
 	labi "github.com/tinfoilsh/go-sev-guest/client/linuxabi"
 	"github.com/tinfoilsh/go-sev-guest/kds"
 	test "github.com/tinfoilsh/go-sev-guest/testing"
 	"github.com/tinfoilsh/go-sev-guest/verify"
-	"go.uber.org/multierr"
+	"github.com/tinfoilsh/go-sev-guest/verify/testdata"
 	"google.golang.org/protobuf/encoding/prototext"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
+	cpb "github.com/tinfoilsh/go-sev-guest/proto/check"
 	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 )
 
@@ -59,17 +63,17 @@ func TestValidateSnpAttestation(t *testing.T) {
 	reportID := []byte{0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 	reportIDMA := []byte{0x00, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
 	chipID := [64]byte{0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06}
-	goodtcb := kds.TCBParts{
+	goodtcb := kds.TCBVersionV0{
 		BlSpl:    0x1f,
 		TeeSpl:   0x7f,
 		SnpSpl:   0x70,
 		UcodeSpl: 0x92,
 	}
 	type testOptions struct {
-		currentTcb     kds.TCBParts
-		reportedTcb    kds.TCBParts
-		committedTcb   kds.TCBParts
-		launchTcb      kds.TCBParts
+		currentTcb     kds.TCBVersionV0
+		reportedTcb    kds.TCBVersionV0
+		committedTcb   kds.TCBVersionV0
+		launchTcb      kds.TCBVersionV0
 		signerInfo     abi.SignerInfo
 		currentBuild   uint8
 		currentMajor   uint8
@@ -79,16 +83,10 @@ func TestValidateSnpAttestation(t *testing.T) {
 		committedMinor uint8
 	}
 	makeReport := func(reportData [64]byte, opts testOptions) [labi.SnpReportRespReportSize]byte {
-		currentTcb, currerr := opts.currentTcb.ToTCBVersionStruct()
-		reportedTcb, reportederr := opts.reportedTcb.ToTCBVersionStruct()
-		committedTcb, committederr := opts.committedTcb.ToTCBVersionStruct()
-		launchTcb, launcherr := opts.launchTcb.ToTCBVersionStruct()
-		if err := multierr.Combine(currerr,
-			reportederr,
-			committederr,
-			launcherr); err != nil {
-			t.Fatal(err)
-		}
+		currentTcb := opts.currentTcb.Uint64()
+		reportedTcb := opts.reportedTcb.Uint64()
+		committedTcb := opts.committedTcb.Uint64()
+		launchTcb := opts.launchTcb.Uint64()
 		reportpb := &spb.Report{
 			Version:         snpReportVersion,
 			Policy:          debugPolicy,
@@ -111,10 +109,10 @@ func TestValidateSnpAttestation(t *testing.T) {
 			CurrentMajor:    uint32(opts.currentMajor),
 			CurrentMinor:    uint32(opts.currentMinor),
 			PlatformInfo:    1,
-			CommittedTcb:    committedTcb.TCB,
-			CurrentTcb:      currentTcb.TCB,
-			LaunchTcb:       launchTcb.TCB,
-			ReportedTcb:     reportedTcb.TCB,
+			CommittedTcb:    uint64(committedTcb),
+			CurrentTcb:      uint64(currentTcb),
+			LaunchTcb:       uint64(launchTcb),
+			ReportedTcb:     uint64(reportedTcb),
 			Signature:       make([]byte, abi.SignatureSize),
 		}
 		reportRaw, err := abi.ReportToAbiBytes(reportpb)
@@ -142,7 +140,7 @@ func TestValidateSnpAttestation(t *testing.T) {
 		VcekCreationTime: now,
 		VlekCreationTime: now,
 		VcekCustom: test.CertOverride{
-			Extensions: test.CustomExtensions(
+			Extensions: test.CustomExtensionsV0(
 				goodtcb,
 				chipID[:],
 				"",
@@ -150,7 +148,7 @@ func TestValidateSnpAttestation(t *testing.T) {
 			),
 		},
 		VlekCustom: test.CertOverride{
-			Extensions: test.CustomExtensions(
+			Extensions: test.CustomExtensionsV0(
 				goodtcb,
 				nil,
 				"Cloud Service Provider",
@@ -226,10 +224,13 @@ func TestValidateSnpAttestation(t *testing.T) {
 			Input: noncecb1455,
 			Output: func() [labi.SnpReportRespReportSize]byte {
 				opts := baseOpts
-				tcb := goodtcb
-				tcb.BlSpl = 0
-				opts.committedTcb = tcb
-				opts.launchTcb = tcb
+				opts.committedTcb = kds.TCBVersionV0{
+					BlSpl:    0,
+					TeeSpl:   0x7f,
+					SnpSpl:   0x70,
+					UcodeSpl: 0x92,
+				}
+				opts.launchTcb = opts.committedTcb
 				return makeReport(noncecb1455, opts)
 			}(),
 		},
@@ -251,7 +252,7 @@ func TestValidateSnpAttestation(t *testing.T) {
 	getter := test.SimpleGetter(
 		map[string][]byte{
 			"https://kdsintf.amd.com/vcek/v1/Milan/cert_chain": rootBytes,
-			"https://kdsintf.amd.com/vcek/v1/Milan/0a0b0c0d0e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010203040506?blSPL=31&teeSPL=127&snpSPL=112&ucodeSPL=146": sign.Vcek.Raw,
+			"https://kdsintf.amd.com/vcek/v1/Milan/0a0b0c0d0e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010203040506?blSPL=31&snpSPL=112&teeSPL=127&ucodeSPL=146": sign.Vcek.Raw,
 		},
 	)
 	attestationFn := func(nonce [64]byte) *spb.Attestation {
@@ -316,7 +317,7 @@ func TestValidateSnpAttestation(t *testing.T) {
 				ReportIDMA:             reportIDMA,
 				MinimumBuild:           2,
 				MinimumVersion:         uint16((1 << 8) | 49),
-				MinimumTCB:             kds.TCBParts{UcodeSpl: 0x44, SnpSpl: 0x05, BlSpl: 0x02},
+				MinimumTCB:             kds.DecomposeTCBVersionV0(0x02 | (uint64(0x05) << 48) | (uint64(0x44) << 56)),
 				TrustedAuthorKeyHashes: [][]byte{authorKeyDigest},
 			},
 		},
@@ -327,7 +328,7 @@ func TestValidateSnpAttestation(t *testing.T) {
 				ReportData:   nonce12345[:],
 				GuestPolicy:  abi.SnpPolicy{Debug: true, SMT: true},
 				PlatformInfo: &abi.SnpPlatformInfo{SMTEnabled: true},
-				MinimumTCB:   kds.TCBParts{UcodeSpl: 0xff, SnpSpl: 0x05, BlSpl: 0x02},
+				MinimumTCB:   kds.DecomposeTCBVersionV0(0x02 | (uint64(0x05) << 48) | (uint64(0xff) << 56)),
 			},
 			wantErr: "the report's REPORTED_TCB {BlSpl:31 TeeSpl:127 Spl4:0 Spl5:0 Spl6:0 Spl7:0 SnpSpl:112 UcodeSpl:146} is lower than the policy minimum TCB {BlSpl:2 TeeSpl:0 Spl4:0 Spl5:0 Spl6:0 Spl7:0 SnpSpl:5 UcodeSpl:255} in at least one component",
 		},
@@ -335,12 +336,24 @@ func TestValidateSnpAttestation(t *testing.T) {
 			name:        "Minimum build checked",
 			attestation: attestation12345,
 			opts: &Options{
-				ReportData:   nonce12345[:],
-				GuestPolicy:  abi.SnpPolicy{Debug: true, SMT: true},
-				PlatformInfo: &abi.SnpPlatformInfo{SMTEnabled: true},
-				MinimumBuild: 3,
+				ReportData:     nonce12345[:],
+				GuestPolicy:    abi.SnpPolicy{Debug: true, SMT: true},
+				PlatformInfo:   &abi.SnpPlatformInfo{SMTEnabled: true},
+				MinimumBuild:   3,
+				MinimumVersion: uint16((1 << 8) | 49),
 			},
-			wantErr: "firmware build number 2 is less than the required minimum 3",
+			wantErr: "firmware version 1.49 build 2 is below the required minimum 1.49 build 3",
+		},
+		{
+			name:        "Minimum build belongs to its API version",
+			attestation: attestation12345,
+			opts: &Options{
+				ReportData:     nonce12345[:],
+				GuestPolicy:    abi.SnpPolicy{Debug: true, SMT: true},
+				PlatformInfo:   &abi.SnpPlatformInfo{SMTEnabled: true},
+				MinimumBuild:   255,
+				MinimumVersion: uint16((1 << 8) | 48),
+			},
 		},
 		{
 			name:        "Minimum version checked",
@@ -351,7 +364,7 @@ func TestValidateSnpAttestation(t *testing.T) {
 				PlatformInfo:   &abi.SnpPlatformInfo{SMTEnabled: true},
 				MinimumVersion: 0xff00,
 			},
-			wantErr: "firmware API version (1.49) is less than the required minimum (255.0)",
+			wantErr: "firmware version 1.49 build 2 is below the required minimum 255.0 build 0",
 		},
 		{
 			name:        "Author key checked",
@@ -417,7 +430,7 @@ func TestValidateSnpAttestation(t *testing.T) {
 			name:        "rejected provisional by tcb",
 			attestation: attestationcb1455,
 			opts:        &Options{ReportData: noncecb1455[:], GuestPolicy: abi.SnpPolicy{Debug: true}},
-			wantErr:     "the report's COMMITTED_TCB Milan or Genoa TCB: 0x9270000000007f00 does not match the report's CURRENT_TCB Milan or Genoa TCB: 0x9270000000007f1f",
+			wantErr:     "the report's COMMITTED_TCB 0x9270000000007f00 does not match the report's CURRENT_TCB 0x9270000000007f1f",
 		},
 		{
 			name:        "accepted provisional by version",
@@ -477,89 +490,12 @@ func TestValidateSnpAttestation(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		if err := SnpAttestation(tc.attestation, tc.opts); (err == nil && tc.wantErr != "") ||
-			(err != nil && (tc.wantErr == "" || !strings.Contains(err.Error(), tc.wantErr))) {
-			t.Errorf("%s: SnpAttestation(%v) errored unexpectedly. Got '%v', want '%s'", tc.name, tc.attestation, err, tc.wantErr)
-		}
-	}
-}
-
-func TestValidateVCEKChipID(t *testing.T) {
-	turinHWID := []byte{0x6b, 0xb1, 0x22, 0x9b, 0x76, 0x92, 0xb7, 0x10}
-	turinChipID := make([]byte, abi.ChipIDSize)
-	copy(turinChipID, turinHWID)
-	legacyChipID := bytes.Repeat([]byte{0x5a}, abi.ChipIDSize)
-
-	tests := []struct {
-		name     string
-		reportID []byte
-		certID   []byte
-		wantErr  string
-	}{
-		{name: "Turin", reportID: turinChipID, certID: turinHWID},
-		{name: "legacy", reportID: legacyChipID, certID: legacyChipID},
-		{name: "masked", reportID: make([]byte, abi.ChipIDSize), certID: turinHWID},
-		{name: "mismatch", reportID: turinChipID, certID: bytes.Repeat([]byte{0xff}, len(turinHWID)), wantErr: "not the same"},
-		{name: "bad report size", reportID: make([]byte, abi.ChipIDSize-1), certID: turinHWID, wantErr: "CHIP_ID has size"},
-		{name: "bad certificate size", reportID: turinChipID, certID: make([]byte, 7), wantErr: "unsupported size"},
-	}
-	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateVCEKChipID(tc.reportID, tc.certID)
-			if (err == nil && tc.wantErr != "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
-				t.Fatalf("validateVCEKChipID() returned %v, want error containing %q", err, tc.wantErr)
+			if err := SnpAttestation(tc.attestation, tc.opts); (err == nil && tc.wantErr != "") ||
+				(err != nil && (tc.wantErr == "" || !strings.Contains(err.Error(), tc.wantErr))) {
+				t.Errorf("Got err '%v', want error containing '%s'", err, tc.wantErr)
 			}
 		})
-	}
-}
-
-func TestReportTCBFormat(t *testing.T) {
-	turinTCB, err := kds.NewTCBVersionStruct("Turin", 0x5200000004010101)
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyTCB, err := kds.NewTCBVersionStruct("Milan", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	turinFMS := abi.MaskedCpuid1EaxFromSevProduct(&spb.SevProduct{Name: spb.SevProduct_SEV_PRODUCT_TURIN})
-	genoaFMS := abi.MaskedCpuid1EaxFromSevProduct(&spb.SevProduct{Name: spb.SevProduct_SEV_PRODUCT_GENOA})
-	sienaFMS := abi.FmsToCpuid1Eax(0x19, 0xa0, 0)
-
-	tests := []struct {
-		name    string
-		report  *spb.Report
-		certTCB kds.TCBVersionStruct
-		wantErr string
-	}{
-		{name: "Turin", report: &spb.Report{Version: abi.ReportVersion3, Cpuid1EaxFms: turinFMS, ReportedTcb: turinTCB.TCB}, certTCB: *turinTCB},
-		{name: "Siena", report: &spb.Report{Version: abi.ReportVersion3, Cpuid1EaxFms: sienaFMS}, certTCB: *legacyTCB},
-		{name: "legacy v2", report: &spb.Report{Version: 2}, certTCB: *legacyTCB},
-		{name: "product mismatch", report: &spb.Report{Version: abi.ReportVersion3, Cpuid1EaxFms: genoaFMS}, certTCB: *turinTCB, wantErr: "different TCB formats"},
-		{name: "Turin certificate with v2 report", report: &spb.Report{Version: 2}, certTCB: *turinTCB, wantErr: "non-legacy TCB format"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := getReportTcbs(tc.report, tc.certTCB)
-			if (err == nil && tc.wantErr != "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
-				t.Fatalf("getReportTcbs() returned %v, want error containing %q", err, tc.wantErr)
-			}
-		})
-	}
-}
-
-func TestValidateIOMMUWriteSafe(t *testing.T) {
-	if err := validatePlatformInfo(1<<6, &abi.SnpPlatformInfo{}); err != nil {
-		t.Fatalf("validatePlatformInfo() rejected IOMMU_WRITE_SAFE: %v", err)
-	}
-	if err := validatePlatformInfo(0, &abi.SnpPlatformInfo{IOMMUWriteSafe: true}); err == nil || !strings.Contains(err.Error(), "IOMMU write-safe") {
-		t.Fatalf("validatePlatformInfo() returned %v, want missing mitigation error", err)
-	}
-	if err := validatePlatformInfo(1<<6, &abi.SnpPlatformInfo{IOMMUWriteSafe: true}); err != nil {
-		t.Fatalf("validatePlatformInfo() rejected required IOMMU_WRITE_SAFE: %v", err)
-	}
-	if err := validatePlatformInfo((1<<6)|(1<<8), &abi.SnpPlatformInfo{}); err == nil || !strings.Contains(err.Error(), "unrecognized platform info bit") {
-		t.Fatalf("validatePlatformInfo() returned %v, want another reserved-bit error", err)
 	}
 }
 
@@ -695,5 +631,130 @@ func TestCheckMitigationVectors(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// FuzzRawSnpAttestation mutates three inputs: a raw attestation report, a certificate table, and
+// a binary check.Policy. PolicyToOptions converts the policy, as tools/check does, and
+// RawSnpAttestation checks the report against the result. The policy in seed 1 fails the debug
+// check, and the policy in seed 2 matches the report.
+func FuzzRawSnpAttestation(f *testing.F) {
+	certTable := (&abi.CertTable{Entries: []abi.CertTableEntry{
+		{GUID: uuid.MustParse(abi.VcekGUID), RawCert: testdata.VcekBytes},
+	}}).Marshal()
+	report, err := abi.ReportToProto(testdata.AttestationBytes)
+	if err != nil {
+		f.Fatalf("ReportToProto(AttestationBytes) failed: %v", err)
+	}
+	minimal, err := proto.Marshal(&cpb.Policy{Policy: abi.SnpPolicyToBytes(abi.SnpPolicy{})})
+	if err != nil {
+		f.Fatalf("proto.Marshal(minimal policy) failed: %v", err)
+	}
+	matching, err := proto.Marshal(&cpb.Policy{
+		MinimumGuestSvn:  report.GetGuestSvn(),
+		Policy:           report.GetPolicy(),
+		FamilyId:         report.GetFamilyId(),
+		ImageId:          report.GetImageId(),
+		Vmpl:             wrapperspb.UInt32(report.GetVmpl()),
+		MinimumTcb:       report.GetCurrentTcb(),
+		MinimumLaunchTcb: report.GetLaunchTcb(),
+		ReportData:       report.GetReportData(),
+		Measurement:      report.GetMeasurement(),
+		HostData:         report.GetHostData(),
+		ReportId:         report.GetReportId(),
+		ReportIdMa:       report.GetReportIdMa(),
+		ChipId:           report.GetChipId(),
+	})
+	if err != nil {
+		f.Fatalf("proto.Marshal(matching policy) failed: %v", err)
+	}
+	f.Add(testdata.AttestationBytes, certTable, minimal)
+	f.Add(testdata.AttestationBytes, certTable, matching)
+
+	f.Fuzz(func(_ *testing.T, rawReport, rawCertTable, rawPolicy []byte) {
+		policy := new(cpb.Policy)
+		if err := proto.Unmarshal(rawPolicy, policy); err != nil {
+			return
+		}
+		opts, err := PolicyToOptions(policy)
+		if err != nil {
+			return
+		}
+		_ = RawSnpAttestation(rawReport, rawCertTable, opts)
+	})
+}
+
+func TestValidateIOMMUWriteSafe(t *testing.T) {
+	if err := validatePlatformInfo(1<<6, &abi.SnpPlatformInfo{}); err != nil {
+		t.Fatalf("validatePlatformInfo() rejected IOMMU_WRITE_SAFE: %v", err)
+	}
+	if err := validatePlatformInfo(0, &abi.SnpPlatformInfo{IOMMUWriteSafe: true}); err == nil || !strings.Contains(err.Error(), "IOMMU write-safe") {
+		t.Fatalf("validatePlatformInfo() returned %v, want missing mitigation error", err)
+	}
+	if err := validatePlatformInfo(1<<6, &abi.SnpPlatformInfo{IOMMUWriteSafe: true}); err != nil {
+		t.Fatalf("validatePlatformInfo() rejected required IOMMU_WRITE_SAFE: %v", err)
+	}
+	if err := validatePlatformInfo((1<<6)|(1<<8), &abi.SnpPlatformInfo{}); err == nil || !strings.Contains(err.Error(), "unrecognized platform info bit") {
+		t.Fatalf("validatePlatformInfo() returned %v, want another reserved-bit error", err)
+	}
+}
+
+func TestValidateVCEKChipID(t *testing.T) {
+	chipID := make([]byte, abi.ChipIDSize)
+	for i := range chipID {
+		chipID[i] = byte(i + 1)
+	}
+	turinChipID := make([]byte, abi.ChipIDSize)
+	copy(turinChipID, chipID[:abi.TurinSiliconIDSize])
+	for _, tc := range []struct {
+		name         string
+		chipID, hwid []byte
+		wantErr      string
+	}{
+		{name: "whole CHIP_ID", chipID: chipID, hwid: chipID},
+		{name: "Turin silicon ID", chipID: turinChipID, hwid: chipID[:abi.TurinSiliconIDSize]},
+		{name: "masked CHIP_ID", chipID: make([]byte, abi.ChipIDSize), hwid: chipID},
+		{name: "another chip", chipID: chipID, hwid: make([]byte, abi.ChipIDSize), wantErr: "is not the same as"},
+		{name: "another Turin chip", chipID: turinChipID, hwid: make([]byte, abi.TurinSiliconIDSize), wantErr: "is not the same as"},
+		{name: "unsupported HWID size", chipID: chipID, hwid: chipID[:16], wantErr: "unsupported size 16"},
+		{name: "short CHIP_ID", chipID: chipID[:8], hwid: chipID[:8], wantErr: "CHIP_ID has size 8"},
+	} {
+		err := validateVCEKChipID(tc.chipID, tc.hwid)
+		if (err == nil) != (tc.wantErr == "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+			t.Errorf("%s: validateVCEKChipID() = %v, want error containing %q", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
+func TestReportTcbsFollowTheProductLayout(t *testing.T) {
+	const turinFms, genoaFms = 0x00b00f21, 0x00a10f11
+	turinTcb := kds.TCBVersionV1{FmcSpl: 1, BlSpl: 3, TeeSpl: 2, SnpSpl: 5, UcodeSpl: 0x61}
+	genoaTcb := kds.TCBVersionV0{BlSpl: 10, SnpSpl: 27, UcodeSpl: 88}
+	report := func(version, fms uint32, tcb uint64) *spb.Report {
+		return &spb.Report{Version: version, Cpuid1EaxFms: fms, ReportedTcb: tcb, CurrentTcb: tcb, CommittedTcb: tcb, LaunchTcb: tcb}
+	}
+	for _, tc := range []struct {
+		name    string
+		report  *spb.Report
+		cert    kds.TCBVersion
+		wantErr string
+	}{
+		{name: "Turin", report: report(5, turinFms, turinTcb.Uint64()), cert: turinTcb},
+		{name: "Genoa", report: report(3, genoaFms, genoaTcb.Uint64()), cert: genoaTcb},
+		{name: "legacy report", report: report(2, 0, genoaTcb.Uint64()), cert: genoaTcb},
+		{name: "Turin report with a legacy certificate", report: report(5, turinFms, turinTcb.Uint64()), cert: genoaTcb, wantErr: "different TCB formats"},
+		{name: "Genoa report with a Turin certificate", report: report(3, genoaFms, genoaTcb.Uint64()), cert: turinTcb, wantErr: "different TCB formats"},
+		{name: "legacy report with a Turin certificate", report: report(2, 0, genoaTcb.Uint64()), cert: turinTcb, wantErr: "non-legacy TCB format"},
+		{name: "Turin reserved bits", report: report(5, turinFms, turinTcb.Uint64()|1<<40), cert: turinTcb, wantErr: "non-zero reserved bits in Turin TCB"},
+		{name: "unknown product", report: report(5, 0x00c00f00, turinTcb.Uint64()), cert: turinTcb, wantErr: "could not determine report TCB format"},
+	} {
+		got, err := getReportTcbs(tc.report, tc.cert)
+		if (err == nil) != (tc.wantErr == "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
+			t.Errorf("%s: getReportTcbs() = %v, want error containing %q", tc.name, err, tc.wantErr)
+			continue
+		}
+		if err == nil && (got.reported.tcb.StructVersion() != tc.cert.StructVersion() || got.reported.tcb.Uint64() != tc.report.GetReportedTcb()) {
+			t.Errorf("%s: reported TCB = %v, want the certificate's layout and the report's value", tc.name, got.reported.tcb)
+		}
 	}
 }

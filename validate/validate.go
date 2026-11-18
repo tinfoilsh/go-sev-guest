@@ -1,4 +1,4 @@
-// Copyright 2022-2025 Google LLC
+// Copyright 2022 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -63,17 +63,22 @@ type Options struct {
 	MinimumVersion uint16
 	// MinimumTCB is the component-wise minimum TCB reported in the attestation report. This
 	// does not include the LaunchTCB.
-	MinimumTCB kds.TCBParts
+	MinimumTCB kds.TCBVersion
 	// MinimumLaunchTCB is the component-wise minimum for the attestation report LaunchTCB.
-	MinimumLaunchTCB kds.TCBParts
+	MinimumLaunchTCB kds.TCBVersion
 	// PermitProvisionalFirmware if true, allows the committed TCB, build, and API values to be less
 	// than or equal to the current values. If false, committed and current values must be equal.
 	PermitProvisionalFirmware bool
-	// PlatformInfo is the maximum of acceptable PLATFORM_INFO data. Not checked if nil.
+	// PlatformInfo constrains the attestation report's PLATFORM_INFO bits. Not checked if nil.
+	// The direction differs per field, matching validatePlatformInfo:
+	//   SMTEnabled, TSMEEnabled and TIOEnabled are maximums. A true field permits the
+	//   corresponding report bit to be set; validation fails when the report sets a bit
+	//   that is false here.
+	//   ECCEnabled, RAPLDisabled, CiphertextHidingDRAMEnabled and AliasCheckComplete are
+	//   minimums. A true field requires the corresponding report bit to be set; validation
+	//   fails when the report leaves it unset. Setting one of these false imposes no
+	//   constraint, so there is currently no way to forbid them.
 	PlatformInfo *abi.SnpPlatformInfo
-	// Deprecated: PLATFORM_INFO bit 6 is IOMMU_WRITE_SAFE and is always parsed according to the
-	// current AMD SEV-SNP ABI. Set PlatformInfo.IOMMUWriteSafe to require the hardware mitigation.
-	PermitPlatformInfoBit6 bool
 	// RequireAuthorKey if true, will not validate a report without AUTHOR_KEY_EN equal to 1.
 	// Implies RequireIDBlock is true.
 	RequireAuthorKey bool
@@ -238,27 +243,6 @@ func PolicyToOptions(policy *cpb.Policy) (*Options, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	minTCBVersionStruct, err := kds.NewTCBVersionStruct(kds.ProductLine(policy.Product), policy.GetMinimumTcb())
-	if err != nil {
-		return nil, err
-	}
-
-	minTCBParts, err := kds.DecomposeTCBVersionStruct(minTCBVersionStruct)
-	if err != nil {
-		return nil, err
-	}
-
-	minLaunchTCBVersionStruct, err := kds.NewTCBVersionStruct(kds.ProductLine(policy.Product), policy.GetMinimumLaunchTcb())
-	if err != nil {
-		return nil, err
-	}
-
-	minLaunchTCBParts, err := kds.DecomposeTCBVersionStruct(minLaunchTCBVersionStruct)
-	if err != nil {
-		return nil, err
-	}
-
 	opts := &Options{
 		MinimumGuestSvn:           policy.GetMinimumGuestSvn(),
 		GuestPolicy:               guestPolicy,
@@ -271,8 +255,8 @@ func PolicyToOptions(policy *cpb.Policy) (*Options, error) {
 		HostData:                  policy.GetHostData(),
 		ReportData:                policy.GetReportData(),
 		PlatformInfo:              platformInfo,
-		MinimumTCB:                minTCBParts,
-		MinimumLaunchTCB:          minLaunchTCBParts,
+		MinimumTCB:                kds.DecomposeTCBVersionV0(policy.GetMinimumTcb()),
+		MinimumLaunchTCB:          kds.DecomposeTCBVersionV0(policy.GetMinimumLaunchTcb()),
 		MinimumBuild:              uint8(policy.GetMinimumBuild()),
 		MinimumVersion:            minVersion,
 		RequireAuthorKey:          policy.GetRequireAuthorKey(),
@@ -372,8 +356,8 @@ func validateVerbatimFields(report *spb.Report, options *Options) error {
 // partDescription combines a TCB decomposition with a short description. It enables concise
 // comparisons with high quality error messages.
 type partDescription struct {
-	parts kds.TCBParts
-	desc  string
+	tcb  kds.TCBVersion
+	desc string
 }
 
 // reportTcbDescriptions is a collection of all TCB kinds that are within or about a report itself.
@@ -394,97 +378,62 @@ type reportTcbDescriptions struct {
 	cert partDescription
 }
 
-func getReportTcbs(report *spb.Report, certTcb kds.TCBVersionStruct) (*reportTcbDescriptions, error) {
-	layout := certTcb
-	if report.GetVersion() >= abi.ReportVersion3 {
-		productLine := kds.ProductLineFromFms(report.GetCpuid1EaxFms())
-		reportLayout, err := kds.NewTCBVersionStruct(productLine, 0)
-		if err != nil {
-			return nil, fmt.Errorf("could not determine report TCB format: %v", err)
-		}
-		if !reportLayout.SameFormat(certTcb) {
-			return nil, fmt.Errorf("report product %q and V[CL]EK certificate use different TCB formats", productLine)
-		}
-		layout = *reportLayout
-	} else {
+// turinReservedTCBMask covers bits 55:32 of a Turin TCB, which are reserved.
+const turinReservedTCBMask = 0x00ffffff00000000
+
+// reportTcbStructVersion returns the TCB layout of the report's TCB fields, which must be the
+// layout of the certificate's TCB.
+func reportTcbStructVersion(report *spb.Report, certTcb kds.TCBVersion) (uint8, error) {
+	if report.GetVersion() < abi.ReportVersion3 {
 		// Reports before version 3 do not carry CPUID product identity and
 		// predate the Turin TCB layout. Do not let a version-1 certificate
 		// reinterpret their TCB fields.
-		legacyLayout, err := kds.NewTCBVersionStruct("Milan", 0)
-		if err != nil {
-			return nil, err
+		if certTcb.StructVersion() != 0 {
+			return 0, fmt.Errorf("report version %d cannot be used with a non-legacy TCB format", report.GetVersion())
 		}
-		if !legacyLayout.SameFormat(certTcb) {
-			return nil, fmt.Errorf("report version %d cannot be used with a non-legacy TCB format", report.GetVersion())
-		}
+		return 0, nil
 	}
+	productLine := kds.ProductLineFromFms(report.GetCpuid1EaxFms())
+	version, err := kds.StructVersionForProductLine(productLine)
+	if err != nil {
+		return 0, fmt.Errorf("could not determine report TCB format: %v", err)
+	}
+	if version != certTcb.StructVersion() {
+		return 0, fmt.Errorf("report product %q and V[CL]EK certificate use different TCB formats", productLine)
+	}
+	return version, nil
+}
 
-	reportedTCBParts, reportedTcbErr := kds.DecomposeTCBVersionStruct(layout.WithTCB(report.GetReportedTcb()))
-	currentTCBParts, currentTcbErr := kds.DecomposeTCBVersionStruct(layout.WithTCB(report.GetCurrentTcb()))
-	committedTCBParts, committedTcbErr := kds.DecomposeTCBVersionStruct(layout.WithTCB(report.GetCommittedTcb()))
-	launchTCBParts, launchTcbErr := kds.DecomposeTCBVersionStruct(layout.WithTCB(report.GetLaunchTcb()))
-	certTCBParts, certTcbErr := kds.DecomposeTCBVersionStruct(certTcb)
-	err := multierr.Combine(reportedTcbErr, currentTcbErr, committedTcbErr, launchTcbErr, certTcbErr)
+func getReportTcbs(report *spb.Report, certTcb kds.TCBVersion) (*reportTcbDescriptions, error) {
+	if certTcb == nil {
+		return nil, errors.New("V[CL]EK certificate has no TCB")
+	}
+	version, err := reportTcbStructVersion(report, certTcb)
 	if err != nil {
 		return nil, err
 	}
-
+	decompose := func(raw uint64) (kds.TCBVersion, error) {
+		// Rejecting non-zero reserved bits keeps them from disappearing
+		// when the TCB is compared with the certificate's.
+		if version == 1 && raw&turinReservedTCBMask != 0 {
+			return nil, fmt.Errorf("non-zero reserved bits in Turin TCB: 0x%x", raw&turinReservedTCBMask)
+		}
+		return kds.DecomposeTCBVersion(version, raw)
+	}
+	reported, reportedErr := decompose(report.GetReportedTcb())
+	current, currentErr := decompose(report.GetCurrentTcb())
+	committed, committedErr := decompose(report.GetCommittedTcb())
+	launch, launchErr := decompose(report.GetLaunchTcb())
+	if err := multierr.Combine(reportedErr, currentErr, committedErr, launchErr); err != nil {
+		return nil, err
+	}
 	return &reportTcbDescriptions{
-		reported: partDescription{
-			parts: reportedTCBParts,
-			desc:  "report's REPORTED_TCB",
-		},
-		current: partDescription{
-			parts: currentTCBParts,
-			desc:  "report's CURRENT_TCB",
-		},
-		committed: partDescription{
-			parts: committedTCBParts,
-			desc:  "report's COMMITTED_TCB",
-		},
-		launch: partDescription{
-			parts: launchTCBParts,
-			desc:  "report's LAUNCH_TCB",
-		},
-		cert: partDescription{
-			parts: certTCBParts,
-			desc:  "TCB of the V[CL]EK certificate",
-		},
+		reported:  partDescription{tcb: reported, desc: "report's REPORTED_TCB"},
+		current:   partDescription{tcb: current, desc: "report's CURRENT_TCB"},
+		committed: partDescription{tcb: committed, desc: "report's COMMITTED_TCB"},
+		launch:    partDescription{tcb: launch, desc: "report's LAUNCH_TCB"},
+		cert:      partDescription{tcb: certTcb, desc: "TCB of the V[CL]EK certificate"},
 	}, nil
-}
-
-// policyTcbDescriptions is a collection of all TCB kinds that the validation policy specifies.
-type policyTcbDescriptions struct {
-	// The validator policy's specified minimum TCB for both reported
-	minimum partDescription
-	// The validator policy's sp
-	minLaunch partDescription
-}
-
-func getPolicyTcbs(options *Options) *policyTcbDescriptions {
-	return &policyTcbDescriptions{
-		minimum: partDescription{
-			parts: options.MinimumTCB,
-			desc:  "policy minimum TCB",
-		},
-		minLaunch: partDescription{
-			parts: options.MinimumLaunchTCB,
-			desc:  "policy minimum launch TCB",
-		},
-	}
-}
-
-// tcbNeError return an error if the two TCBs are not equal
-func tcbNeError(left, right partDescription) error {
-	ltcb, leftErr := left.parts.ToTCBVersionStruct()
-	rtcb, rightErr := right.parts.ToTCBVersionStruct()
-	if err := multierr.Combine(leftErr, rightErr); err != nil {
-		return fmt.Errorf("could not compare TCB values: %v", err)
-	}
-	if ltcb == rtcb {
-		return nil
-	}
-	return fmt.Errorf("the %s %s does not match the %s %s", left.desc, ltcb.String(), right.desc, rtcb.String())
 }
 
 func validateVCEKChipID(reportChipID, certificateHWID []byte) error {
@@ -499,8 +448,8 @@ func validateVCEKChipID(reportChipID, certificateHWID []byte) error {
 	switch len(certificateHWID) {
 	case abi.ChipIDSize:
 		reportHWID = reportChipID
-	case 8: // Turin and later use an 8-byte PSN-based HWID in VCEK certificates.
-		reportHWID = reportChipID[:8]
+	case abi.TurinSiliconIDSize: // Turin uses an 8-byte silicon ID as the HWID of VCEK certificates.
+		reportHWID = reportChipID[:abi.TurinSiliconIDSize]
 	default:
 		return fmt.Errorf("VCEK certificate HWID has unsupported size %d", len(certificateHWID))
 	}
@@ -511,20 +460,55 @@ func validateVCEKChipID(reportChipID, certificateHWID []byte) error {
 	return nil
 }
 
+// policyTcbDescriptions is a collection of all TCB kinds that the validation policy specifies.
+type policyTcbDescriptions struct {
+	// The validator policy's specified minimum TCB for both reported
+	minimum partDescription
+	// The validator policy's sp
+	minLaunch partDescription
+}
+
+func getPolicyTcbs(options *Options) *policyTcbDescriptions {
+	return &policyTcbDescriptions{
+		minimum: partDescription{
+			tcb:  options.MinimumTCB,
+			desc: "policy minimum TCB",
+		},
+		minLaunch: partDescription{
+			tcb:  options.MinimumLaunchTCB,
+			desc: "policy minimum launch TCB",
+		},
+	}
+}
+
+// tcbNeError return an error if the two TCBs are not equal
+func tcbNeError(left, right partDescription) error {
+	if left.tcb == nil || right.tcb == nil {
+		return nil
+	}
+	if left.tcb.StructVersion() == right.tcb.StructVersion() && left.tcb.Uint64() == right.tcb.Uint64() {
+		return nil
+	}
+	return fmt.Errorf("the %s 0x%x does not match the %s 0x%x", left.desc, left.tcb.Uint64(), right.desc, right.tcb.Uint64())
+}
+
 // tcbGtError returns an error if wantLower is greater than (in part) wantHigher. It enforces
 // the property wantLower <= wantHigher.
 func tcbGtError(wantLower, wantHigher partDescription) error {
-	if kds.TCBPartsLE(wantLower.parts, wantHigher.parts) {
+	if wantLower.tcb == nil || wantHigher.tcb == nil {
+		return nil
+	}
+	if wantLower.tcb.LE(wantHigher.tcb) {
 		return nil
 	}
 	return fmt.Errorf("the %s %s is lower than the %s %s in at least one component",
-		wantHigher.desc, wantHigher.parts.String(), wantLower.desc, wantLower.parts.String())
+		wantHigher.desc, wantHigher.tcb.String(), wantLower.desc, wantLower.tcb.String())
 }
 
 // validateTcb returns an error if the TCB values present in the report and V[CL]EK certificate do not
 // obey expected relationships with respect to the given validation policy, or with respect to
 // internal consistency checks.
-func validateTcb(report *spb.Report, certTcb kds.TCBVersionStruct, options *Options) error {
+func validateTcb(report *spb.Report, certTcb kds.TCBVersion, options *Options) error {
 	reportTcbs, err := getReportTcbs(report, certTcb)
 	if err != nil {
 		return err
@@ -574,41 +558,34 @@ func validateTcb(report *spb.Report, certTcb kds.TCBVersionStruct, options *Opti
 	//    that we think it reasonable for the reported TCB to be the lowest of the bunch.
 }
 
+// firmwareVersion orders SEV firmware as AMD numbers it: API major, then
+// minor, then the build within that API version. Each part is one byte.
+func firmwareVersion(major, minor, build uint32) uint32 {
+	return major<<16 | minor<<8 | build
+}
+
 func validateVersion(report *spb.Report, options *Options) error {
-	if options.MinimumBuild > uint8(report.GetCurrentBuild()) {
-		return fmt.Errorf("firmware build number %d is less than the required minimum %d",
-			report.GetCurrentBuild(), options.MinimumBuild)
+	minimum := firmwareVersion(uint32(options.MinimumVersion>>8), uint32(options.MinimumVersion&0xff), uint32(options.MinimumBuild))
+	current := firmwareVersion(report.GetCurrentMajor(), report.GetCurrentMinor(), report.GetCurrentBuild())
+	if current < minimum {
+		return fmt.Errorf("firmware version %d.%d build %d is below the required minimum %d.%d build %d",
+			report.GetCurrentMajor(), report.GetCurrentMinor(), report.GetCurrentBuild(),
+			options.MinimumVersion>>8, options.MinimumVersion&0xff, options.MinimumBuild)
 	}
-	if options.MinimumVersion > (uint16(report.GetCurrentMajor()<<8) | uint16(report.GetCurrentMinor())) {
-		return fmt.Errorf("firmware API version (%d.%d) is less than the required minimum (%d.%d)",
-			report.GetCurrentMajor(), report.GetCurrentMinor(),
-			options.MinimumVersion>>8, options.MinimumVersion&0xff)
-	}
-	buildCmp := int(report.GetCommittedBuild()) - int(report.GetCurrentBuild())
-	versionCmp := compareByteVersions(uint8(report.GetCommittedMajor()),
-		uint8(report.GetCommittedMinor()),
-		uint8(report.GetCurrentMajor()),
-		uint8(report.GetCurrentMinor()))
 	if !options.PermitProvisionalFirmware {
-		if buildCmp != 0 {
+		if report.GetCommittedBuild() != report.GetCurrentBuild() {
 			return fmt.Errorf("committed build number %d does not match the current build number %d",
 				report.GetCommittedBuild(), report.GetCurrentBuild())
 		}
-		if versionCmp != 0 {
+		if report.GetCommittedMajor() != report.GetCurrentMajor() || report.GetCommittedMinor() != report.GetCurrentMinor() {
 			return fmt.Errorf("committed API version (%d.%d) does not match the current API version (%d.%d)",
 				report.GetCommittedMajor(), report.GetCommittedMinor(),
 				report.GetCurrentMajor(), report.GetCurrentMinor())
 		}
-	} else {
-		if buildCmp > 0 {
-			return fmt.Errorf("committed build number %d is greater than the current build number %d",
-				report.GetCommittedBuild(), report.GetCurrentBuild())
-		}
-		if versionCmp > 0 {
-			return fmt.Errorf("committed API version (%d.%d) is greater than the current API version (%d.%d)",
-				report.GetCommittedMajor(), report.GetCommittedMinor(),
-				report.GetCurrentMinor(), report.GetCurrentMinor())
-		}
+	} else if firmwareVersion(report.GetCommittedMajor(), report.GetCommittedMinor(), report.GetCommittedBuild()) > current {
+		return fmt.Errorf("committed firmware version %d.%d build %d is later than the current version %d.%d build %d",
+			report.GetCommittedMajor(), report.GetCommittedMinor(), report.GetCommittedBuild(),
+			report.GetCurrentMajor(), report.GetCurrentMinor(), report.GetCurrentBuild())
 	}
 	return nil
 }
@@ -815,9 +792,6 @@ func validateMitigationVectors(report *spb.Report, opts *Options) error {
 // SnpAttestation validates fields of the protobuf representation of an attestation report against
 // expectations. Does not check the attestation certificates or signature.
 func SnpAttestation(attestation *spb.Attestation, options *Options) error {
-	if options == nil {
-		return fmt.Errorf("options cannot be nil")
-	}
 	endorsementKeyCert, err := validateKeyKind(attestation)
 	if err != nil {
 		return err
@@ -841,7 +815,7 @@ func SnpAttestation(attestation *spb.Attestation, options *Options) error {
 	if err := multierr.Combine(
 		validatePolicy(report.GetPolicy(), options.GuestPolicy),
 		validateVerbatimFields(report, options),
-		validateTcb(report, exts.TCBVersionStruct, options),
+		validateTcb(report, exts.TCBVersion, options),
 		validateVersion(report, options),
 		validatePlatformInfo(report.GetPlatformInfo(), options.PlatformInfo),
 		validateKeys(report, options),

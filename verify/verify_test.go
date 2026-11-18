@@ -27,6 +27,7 @@ import (
 	_ "embed"
 	"encoding/asn1"
 	"encoding/pem"
+	"errors"
 	"flag"
 	"fmt"
 	"math/big"
@@ -39,9 +40,11 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/logger"
+	"github.com/google/uuid"
 	"github.com/tinfoilsh/go-sev-guest/abi"
 	sg "github.com/tinfoilsh/go-sev-guest/client"
 	"github.com/tinfoilsh/go-sev-guest/kds"
+	cpb "github.com/tinfoilsh/go-sev-guest/proto/check"
 	spb "github.com/tinfoilsh/go-sev-guest/proto/sevsnp"
 	test "github.com/tinfoilsh/go-sev-guest/testing"
 	testclient "github.com/tinfoilsh/go-sev-guest/testing/client"
@@ -618,6 +621,10 @@ func TestOpenGetExtendedReportVerifyClose(t *testing.T) {
 		for _, getReport := range reportGetters {
 			t.Run(tc.Name+"_"+getReport.name, func(t *testing.T) {
 				trust.ClearProductCertCache()
+				if !sg.UseDefaultSevGuest() && tc.EK == test.KeyChoiceVlek {
+					t.Skip()
+					return
+				}
 				if getReport.skipVlek && tc.EK == test.KeyChoiceVlek {
 					t.Skip()
 					return
@@ -790,7 +797,7 @@ func TestRealAttestationVerification(t *testing.T) {
 		map[string][]byte{
 			"https://kdsintf.amd.com/vcek/v1/Milan/cert_chain": trust.AskArkMilanVcekBytes,
 			// Use the VCEK's hwID and known TCB values to specify the URL its VCEK cert would be fetched from.
-			"https://kdsintf.amd.com/vcek/v1/Milan/3ac3fe21e13fb0990eb28a802e3fb6a29483a6b0753590c951bdd3b8e53786184ca39e359669a2b76a1936776b564ea464cdce40c05f63c9b610c5068b006b5d?blSPL=2&teeSPL=0&snpSPL=5&ucodeSPL=68": testdata.VcekBytes,
+			"https://kdsintf.amd.com/vcek/v1/Milan/3ac3fe21e13fb0990eb28a802e3fb6a29483a6b0753590c951bdd3b8e53786184ca39e359669a2b76a1936776b564ea464cdce40c05f63c9b610c5068b006b5d?blSPL=2&snpSPL=5&teeSPL=0&ucodeSPL=68": testdata.VcekBytes,
 		},
 	)
 	tcs := []struct {
@@ -833,37 +840,6 @@ func TestRealAttestationVerification(t *testing.T) {
 	}
 }
 
-func TestValidateExtensionsTCBFormat(t *testing.T) {
-	turinTCB, err := kds.NewTCBVersionStruct("Turin", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	legacyTCB, err := kds.NewTCBVersionStruct("Milan", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	tests := []struct {
-		name        string
-		productLine string
-		tcb         kds.TCBVersionStruct
-		wantErr     string
-	}{
-		{name: "Turin", productLine: "Turin", tcb: *turinTCB},
-		{name: "legacy", productLine: "Genoa", tcb: *legacyTCB},
-		{name: "format mismatch", productLine: "Turin", tcb: *legacyTCB, wantErr: "different TCB formats"},
-		{name: "unknown product", productLine: "Venice", tcb: *turinTCB, wantErr: "could not determine TCB format"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			err := validateExtensions(&kds.Extensions{TCBVersionStruct: tc.tcb}, abi.VcekReportSigner, tc.productLine)
-			if (err == nil && tc.wantErr != "") || (err != nil && !strings.Contains(err.Error(), tc.wantErr)) {
-				t.Fatalf("validateExtensions() returned %v, want error containing %q", err, tc.wantErr)
-			}
-		})
-	}
-}
-
 func TestKDSCertBackdated(t *testing.T) {
 	if !test.TestUseKDS() {
 		t.Skip()
@@ -898,9 +874,9 @@ func TestV3KDSProduct(t *testing.T) {
 		t.Fatalf("no test cases")
 	}
 	getter := test.SimpleGetter(map[string][]byte{
-		"https://kdsintf.amd.com/vcek/v1/Milan/00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000?blSPL=0&teeSPL=0&snpSPL=0&ucodeSPL=0": []byte("milancert"),
+		"https://kdsintf.amd.com/vcek/v1/Milan/00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000?blSPL=0&snpSPL=0&teeSPL=0&ucodeSPL=0": []byte("milancert"),
 		"https://kdsintf.amd.com/vcek/v1/Milan/cert_chain": trust.AskArkMilanVcekBytes,
-		"https://kdsintf.amd.com/vcek/v1/Genoa/00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000?blSPL=0&teeSPL=0&snpSPL=0&ucodeSPL=0": []byte("genoacert"),
+		"https://kdsintf.amd.com/vcek/v1/Genoa/00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000?blSPL=0&snpSPL=0&teeSPL=0&ucodeSPL=0": []byte("genoacert"),
 		"https://kdsintf.amd.com/vcek/v1/Genoa/cert_chain": trust.AskArkGenoaVcekBytes,
 	})
 	options := &Options{
@@ -922,7 +898,7 @@ func TestV3KDSProduct(t *testing.T) {
 		t.Run(tc.Name, func(t *testing.T) {
 			report, _ := abi.ReportToProto(tc.Output[:])
 			a := &spb.Attestation{Report: report}
-			if err := fillInAttestation(context.Background(), a, options); err != nil {
+			if err := fillInAttestation(context.Background(), a, options, true); err != nil {
 				t.Fatalf("fillInAttestation(%v, %v) = %v, want nil", a, options, err)
 			}
 			var want []byte
@@ -1051,4 +1027,351 @@ func TestForgedRootChainRejected(t *testing.T) {
 	if !strings.Contains(err.Error(), expectedErr) {
 		t.Errorf("Expected attestation to fail with trusted root verification failure, got: %v", err)
 	}
+}
+
+type recordingCertGetter struct {
+	urls   []string
+	getter trust.HTTPSGetter
+}
+
+func (g *recordingCertGetter) Get(url string) ([]byte, error) {
+	g.urls = append(g.urls, url)
+	if g.getter != nil {
+		return g.getter.Get(url)
+	}
+	return nil, fmt.Errorf("network disabled")
+}
+
+func TestTrustedRootsCertificateFetching(t *testing.T) {
+	if !sg.UseDefaultSevGuest() {
+		t.Skip("requires test certificates")
+	}
+	now := time.Now()
+	tcs := test.TestCases()
+	qp, roots, badRoots, _ := testclient.GetSevQuoteProvider(tcs, &test.DeviceOptions{Now: now}, t)
+	for _, key := range []test.KeyChoice{test.KeyChoiceVcek, test.KeyChoiceVlek} {
+		keyName := "VCEK"
+		if key == test.KeyChoiceVlek {
+			keyName = "VLEK"
+		}
+		var input [64]byte
+		found := false
+		for _, tc := range tcs {
+			if tc.EK == key && tc.WantErr == "" {
+				input = tc.Input
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("no test report for signing key %v", key)
+		}
+		for _, tc := range []struct {
+			Name                string
+			RemoveAsk           bool
+			RemoveArk           bool
+			DisableCertFetching bool
+			BadRoots            bool
+			DefaultRoots        bool
+			CheckRevocations    bool
+			BadSignature        bool
+			WantErr             string
+		}{
+			{Name: "complete chain"},
+			{Name: "missing ASK", RemoveAsk: true},
+			{Name: "missing ARK", RemoveArk: true},
+			{Name: "missing both", RemoveAsk: true, RemoveArk: true},
+			{Name: "fetching disabled", RemoveAsk: true, RemoveArk: true, DisableCertFetching: true},
+			{
+				Name: "wrong roots", RemoveAsk: true, RemoveArk: true,
+				BadRoots: true, WantErr: "could not be verified by any trusted roots",
+			},
+			{
+				Name: "default roots reject test certificates", RemoveAsk: true, RemoveArk: true,
+				DefaultRoots: true, WantErr: "could not be verified by any trusted roots",
+			},
+			{
+				Name: "revocation check", RemoveAsk: true, RemoveArk: true,
+				CheckRevocations: true, WantErr: "network disabled",
+			},
+			{
+				Name: "bad signature", RemoveAsk: true, RemoveArk: true,
+				BadSignature: true, WantErr: "report signature verification error",
+			},
+		} {
+			for name, verify := range snpAttestationFuncs {
+				t.Run(fmt.Sprintf("%s/%s/%s", keyName, tc.Name, name), func(t *testing.T) {
+					trust.ClearProductCertCache()
+					t.Cleanup(trust.ClearProductCertCache)
+					attestation, err := sg.GetQuoteProto(qp, input)
+					if err != nil {
+						t.Fatalf("GetQuoteProto() = %v", err)
+					}
+					if tc.RemoveAsk {
+						attestation.CertificateChain.AskCert = nil
+					}
+					if tc.RemoveArk {
+						attestation.CertificateChain.ArkCert = nil
+					}
+					if tc.BadSignature {
+						attestation.Report.Signature[0] ^= 1
+					}
+					getter := &recordingCertGetter{}
+					options := &Options{
+						TrustedRoots: roots, Now: now, Getter: getter,
+						DisableCertFetching: tc.DisableCertFetching,
+						CheckRevocations:    tc.CheckRevocations,
+					}
+					if tc.BadRoots {
+						options.TrustedRoots = badRoots
+					}
+					if tc.DefaultRoots {
+						options.TrustedRoots = nil
+					}
+					if err := verify(attestation, options); !test.Match(err, tc.WantErr) {
+						t.Errorf("%s() = %v, want %q", name, err, tc.WantErr)
+					}
+					var wantURLs []string
+					if tc.CheckRevocations {
+						wantURLs = roots[test.GetProductLine()][0].ProductCerts.Ask.CRLDistributionPoints
+					}
+					if diff := cmp.Diff(wantURLs, getter.urls); diff != "" {
+						t.Errorf("requested URLs diff (-want +got): %s", diff)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestAttestationCertificateFetching(t *testing.T) {
+	if !sg.UseDefaultSevGuest() {
+		t.Skip("requires test certificates")
+	}
+	now := time.Now()
+	qp, roots, _, fakeKDS := testclient.GetSevQuoteProvider(test.TestCases(), &test.DeviceOptions{Now: now}, t)
+	for _, tc := range []struct {
+		Name        string
+		Reconstruct bool
+		Offline     bool
+		WantErr     string
+	}{
+		{Name: "missing VCEK"},
+		{Name: "missing VCEK offline", Offline: true, WantErr: "could not download VCEK certificate: network disabled"},
+		{Name: "reconstruct chain", Reconstruct: true},
+		{
+			Name: "reconstruct chain offline", Reconstruct: true, Offline: true,
+			WantErr: "could not download ASK and ARK certificates: network disabled",
+		},
+	} {
+		t.Run(tc.Name, func(t *testing.T) {
+			trust.ClearProductCertCache()
+			t.Cleanup(trust.ClearProductCertCache)
+			attestation, err := sg.GetQuoteProto(qp, [64]byte{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			getter := &recordingCertGetter{getter: fakeKDS}
+			if tc.Offline {
+				getter.getter = nil
+			}
+			options := &Options{TrustedRoots: roots, Now: now, Getter: getter}
+			wantChain := attestation.CertificateChain
+			productLine := test.GetProductLine()
+			report := attestation.Report
+			vcekURL := kds.VCEKCertURL(productLine, report.ChipId, kds.DecomposeTCBVersionV0(report.ReportedTcb))
+			wantURLs := []string{vcekURL}
+			if tc.Reconstruct {
+				wantURLs = []string{kds.ProductCertChainURL(abi.VcekReportSigner, productLine)}
+				if !tc.Offline {
+					wantURLs = append(wantURLs, vcekURL)
+				}
+				attestation, err = GetAttestationFromReport(report, options)
+			} else {
+				attestation.CertificateChain = &spb.CertificateChain{}
+				options.Product = attestation.Product
+				err = SnpAttestation(attestation, options)
+			}
+			if !test.Match(err, tc.WantErr) {
+				t.Fatalf("attestation = %v, error = %v. Want err: %v", attestation, err, tc.WantErr)
+			}
+			if diff := cmp.Diff(wantURLs, getter.urls); diff != "" {
+				t.Errorf("requested URLs diff (-want +got): %s", diff)
+			}
+			if tc.WantErr != "" {
+				return
+			}
+			if !bytes.Equal(attestation.CertificateChain.VcekCert, wantChain.VcekCert) {
+				t.Error("VCEK differs from the original certificate")
+			}
+			if tc.Reconstruct {
+				if !bytes.Equal(attestation.CertificateChain.AskCert, wantChain.AskCert) {
+					t.Error("ASK differs from the original certificate")
+				}
+				if !bytes.Equal(attestation.CertificateChain.ArkCert, wantChain.ArkCert) {
+					t.Error("ARK differs from the original certificate")
+				}
+			}
+		})
+	}
+}
+
+func newTestAttestation(t *testing.T) (*spb.Attestation, map[string][]*trust.AMDRootCerts) {
+	t.Helper()
+	if !sg.UseDefaultSevGuest() {
+		t.Skip("requires test certificates")
+	}
+	signMu.Do(initSigner)
+	qp, roots, _, _ := testclient.GetSevQuoteProvider(test.TestCases(), &test.DeviceOptions{Signer: signer}, t)
+	attestation, err := sg.GetQuoteProto(qp, [64]byte{})
+	if err != nil {
+		t.Fatalf("Setup: GetQuoteProto() failed: %v", err)
+	}
+	return attestation, roots
+}
+
+func TestSnpAttestationNilGetterCompleteChain(t *testing.T) {
+	attestation, roots := newTestAttestation(t)
+	options := &Options{TrustedRoots: roots, Now: time.Now(), Product: attestation.Product}
+
+	if err := SnpAttestation(attestation, options); err != nil {
+		t.Errorf("SnpAttestation() = %v, want nil", err)
+	}
+}
+
+func TestSnpAttestationNilGetterMissingVcek(t *testing.T) {
+	attestation, roots := newTestAttestation(t)
+	attestation.CertificateChain.VcekCert = nil
+	options := &Options{TrustedRoots: roots, Now: time.Now(), Product: attestation.Product}
+
+	if err := SnpAttestation(attestation, options); !errors.Is(err, ErrNoGetter) {
+		t.Errorf("SnpAttestation() = %v, want %v", err, ErrNoGetter)
+	}
+}
+
+func TestGetAttestationFromReportNilGetter(t *testing.T) {
+	attestation, roots := newTestAttestation(t)
+	options := &Options{TrustedRoots: roots, Now: time.Now(), Product: attestation.Product}
+
+	if _, err := GetAttestationFromReport(attestation.Report, options); !errors.Is(err, ErrNoGetter) {
+		t.Errorf("GetAttestationFromReport() = _, %v, want _, %v", err, ErrNoGetter)
+	}
+}
+
+func TestSnpAttestationNilGetterUncachedCRL(t *testing.T) {
+	attestation, roots := newTestAttestation(t)
+	options := &Options{
+		TrustedRoots:     roots,
+		Now:              time.Now(),
+		Product:          attestation.Product,
+		CheckRevocations: true,
+	}
+
+	err := SnpAttestation(attestation, options)
+	var crlErr CRLUnavailableErr
+	if !errors.Is(err, ErrNoGetter) || errors.As(err, &crlErr) {
+		t.Errorf("SnpAttestation() = %v, want %v and not CRLUnavailableErr", err, ErrNoGetter)
+	}
+}
+
+func TestGetCrlAndCheckRootNilGetterCachedCRL(t *testing.T) {
+	signMu.Do(initSigner)
+	now := time.Now()
+	der, err := x509.CreateRevocationList(crand.Reader, &x509.RevocationList{
+		SignatureAlgorithm: x509.SHA384WithRSAPSS,
+		Number:             big.NewInt(1),
+		ThisUpdate:         now.Add(-time.Hour),
+		NextUpdate:         now.Add(time.Hour),
+	}, signer.Ark, signer.Keys.Ark)
+	if err != nil {
+		t.Fatalf("Setup: CreateRevocationList() failed: %v", err)
+	}
+	crl, err := x509.ParseRevocationList(der)
+	if err != nil {
+		t.Fatalf("Setup: ParseRevocationList() failed: %v", err)
+	}
+	root := trust.AMDRootCertsProduct(test.GetProductLine())
+	root.ProductCerts = &trust.ProductCerts{Ark: signer.Ark, Ask: signer.Ask}
+	root.CRL = crl
+
+	got, err := GetCrlAndCheckRoot(root, &Options{Now: now})
+	if err != nil || got != crl {
+		t.Errorf("GetCrlAndCheckRoot() = %v, %v, want the cached CRL and nil", got, err)
+	}
+}
+
+func TestGetCrlAndCheckRootNilGetterExpiredCRL(t *testing.T) {
+	now := time.Now()
+	root := trust.AMDRootCertsProduct(test.GetProductLine())
+	root.CRL = &x509.RevocationList{NextUpdate: now.Add(-time.Hour)}
+
+	if _, err := GetCrlAndCheckRoot(root, &Options{Now: now}); !errors.Is(err, ErrNoGetter) {
+		t.Errorf("GetCrlAndCheckRoot() = _, %v, want _, %v", err, ErrNoGetter)
+	}
+}
+
+func TestRootOfTrustToOptionsGetter(t *testing.T) {
+	opts, err := RootOfTrustToOptions(&cpb.RootOfTrust{})
+	if err != nil {
+		t.Fatalf("RootOfTrustToOptions() failed: %v", err)
+	}
+	if opts.Getter == nil {
+		t.Errorf("RootOfTrustToOptions().Getter = nil, want non-nil")
+	}
+}
+
+func TestRootOfTrustToOptionsDisallowNetwork(t *testing.T) {
+	opts, err := RootOfTrustToOptions(&cpb.RootOfTrust{DisallowNetwork: true})
+	if err != nil {
+		t.Fatalf("RootOfTrustToOptions() failed: %v", err)
+	}
+	if opts.Getter != nil {
+		t.Errorf("RootOfTrustToOptions(&RootOfTrust{DisallowNetwork: true}).Getter = %v, want nil", opts.Getter)
+	}
+}
+
+// FuzzSnpAttestation mutates an extended report: a raw attestation report followed by a
+// certificate table. ReportCertsToProto splits the input, and SnpAttestation checks the
+// certificate chain and the report signature. The report in both seeds is signed by AMD, so both
+// seeds pass and mutated inputs reach the reject paths.
+func FuzzSnpAttestation(f *testing.F) {
+	vcek, err := x509.ParseCertificate(testdata.VcekBytes)
+	if err != nil {
+		f.Fatalf("ParseCertificate(VcekBytes) failed: %v", err)
+	}
+	report, err := abi.ReportToProto(testdata.AttestationBytes)
+	if err != nil {
+		f.Fatalf("ReportToProto(AttestationBytes) failed: %v", err)
+	}
+	ask, ark, err := kds.ParseProductCertChain(trust.AskArkMilanVcekBytes)
+	if err != nil {
+		f.Fatalf("ParseProductCertChain(AskArkMilanVcekBytes) failed: %v", err)
+	}
+	// The seed with an empty certificate table makes SnpAttestation fetch the VCEK from KDS. The
+	// getter returns testdata.VcekBytes for that URL and a 404 error for every other URL.
+	// The report in both seeds is version 2, which has no CPUID family/model/stepping field.
+	// When the product is unknown, SnpAttestation defaults to Milan-B1 and requests the Milan URL.
+	getter := test.SimpleGetter(map[string][]byte{
+		kds.VCEKCertURL("Milan", report.GetChipId(), kds.DecomposeTCBVersionV0(report.GetReportedTcb())): testdata.VcekBytes,
+	})
+	// A fixed time inside the VCEK validity period keeps results the same after the VCEK expires.
+	now := vcek.NotBefore.Add(24 * time.Hour)
+	certTable := (&abi.CertTable{Entries: []abi.CertTableEntry{
+		{GUID: uuid.MustParse(abi.ArkGUID), RawCert: ark},
+		{GUID: uuid.MustParse(abi.AskGUID), RawCert: ask},
+		{GUID: uuid.MustParse(abi.VcekGUID), RawCert: testdata.VcekBytes},
+	}}).Marshal()
+	emptyTable := (&abi.CertTable{}).Marshal()
+	f.Add(append(append([]byte{}, testdata.AttestationBytes...), certTable...))
+	f.Add(append(append([]byte{}, testdata.AttestationBytes...), emptyTable...))
+
+	f.Fuzz(func(_ *testing.T, data []byte) {
+		attestation, err := abi.ReportCertsToProto(data)
+		if err != nil {
+			return
+		}
+		// SnpAttestation sets options.Product when it is nil. A shared Options would carry one
+		// input's product into the next input, so each call gets a new Options.
+		_ = SnpAttestation(attestation, &Options{Getter: getter, Now: now})
+	})
 }

@@ -287,9 +287,11 @@ func testCases() []testCase {
 			setter: uint64setter("policy"),
 		},
 		{
-			flag:   "min_build",
-			good:   "0",
-			bad:    []string{"257", "90"},
+			flag: "min_build",
+			// A build floor counts within its API version, and a flag is
+			// tested alone here, so only an unreadable build is bad.
+			good:   "90",
+			bad:    []string{"257"},
 			setter: uint32setter("minimum_build"),
 		},
 		{
